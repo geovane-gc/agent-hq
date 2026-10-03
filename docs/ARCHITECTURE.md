@@ -24,7 +24,7 @@ Electron         |  orchestrator   commands, roles, dispatch, sessions, terminal
                  |  LocalRunner -> claude (interactive TUI in a PTY) per agent       |
                  |  RemoteRunner <-ws- teammate's `agent-hq join`                    |
                  +-------------------------------------------------------------------+
-claude --stdio--> hq-mcp.ts --ws--> host          (board tools for agents/managers)
+claude --stdio--> hq-mcp.ts --ws--> host          (board tools for agents/coordinators)
 claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate limits)
 ```
 
@@ -33,7 +33,7 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | File | Role |
 |---|---|
 | `server.ts` | HTTP (static UI) and WebSocket. Resolves each connection to an actor: owner, member, agent (HQ MCP) or runner. Relays agent terminal output to the clients watching it |
-| `orchestrator.ts` | Commands, permission checks (owner-only, agent-owner-only, manager-only), dispatch, session lifecycle, terminal buffers |
+| `orchestrator.ts` | Commands, permission checks (owner-only, agent-owner-only, coordinator-only), dispatch, session lifecycle, terminal buffers |
 | `store.ts`, `db.ts` | In-memory world backed by SQLite: entities, transcript, usage. Normalizes records saved by older versions |
 | `runner/local.ts` | Runs sessions on this machine: worktree, memory and system prompt, MCP config, adapter |
 | `runner/hook-server.ts` | Loopback HTTP endpoint receiving Claude Code hook events for this runner's sessions |
@@ -43,7 +43,7 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `adapters/claude-code.ts` | Binary discovery and the headless `claude -p` stream-json fallback |
 | `adapters/env.ts` | Strips inherited Claude Code session variables from spawned processes |
 | `hooks/hq-hook.ts` | Hook/statusline command that forwards events to the runner |
-| `mcp/hq-mcp.ts` | Stdio MCP server giving agents `list_team`, `list_projects` and `list_tasks`; managers also get `create_task` and `assign_task` |
+| `mcp/hq-mcp.ts` | Stdio MCP server giving agents `list_team`, `list_projects` and `list_tasks`; coordinators also get `create_task` and `assign_task` |
 | `integrations.ts` | Default optional MCP catalog and the Windows `cmd /c` wrapping for npx/uvx |
 | `terminal.ts` | Boss terminal |
 
@@ -110,7 +110,7 @@ A worktree is created on the runner's machine at `<data>/wt/<project8>/<task8>` 
 Reopened tasks reuse their branch. Marking a task done stops the session, waits for the process to exit (Windows locks
 a process's working directory) and removes the worktree if it is clean.
 
-Auto-dispatch: idle non-manager agents take the oldest unassigned `todo` task whose project is on their floor, but
+Auto-dispatch: idle non-coordinator agents take the oldest unassigned `todo` task whose project is on their floor, but
 never interrupt a free conversation someone is watching. Tasks assigned to a busy agent wait in that agent's queue.
 
 ## Multiplayer model

@@ -183,7 +183,7 @@ export interface Agent {
   /** Extra instructions appended to the adapter's default system prompt. */
   instructions: string;
   permissionMode: PermissionMode;
-  /** Managers can create and assign board tasks through the HQ MCP tools. */
+  /** Coordinators can create and assign board tasks through the HQ MCP tools. */
   isManager: boolean;
   /** Ids of integrations (MCP servers) from settings this agent may use. */
   integrations: ID[];

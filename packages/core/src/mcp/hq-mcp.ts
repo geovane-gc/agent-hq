@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The "hq" MCP server: gives an agent access to the office board. Claude Code
 // starts it over stdio; it talks to the Agent HQ host over WebSocket using a
-// short-lived token tied to that agent. Managers can also create and assign
+// short-lived token tied to that agent. Coordinators can also create and assign
 // tasks, which is how agents delegate to teammates.
 //
 // Usage: node hq-mcp.ts --url ws://host:4317 --token <agent token> [--manager]
@@ -57,7 +57,7 @@ connect();
 // ------------------------------------------------------------------ tools
 
 const describeAgent = (a: Agent) =>
-  `- ${a.name} (${a.role}${a.isManager ? ', manager' : ''}) id=${a.id} status=${a.status}${a.activity ? ` — ${a.activity}` : ''}`;
+  `- ${a.name} (${a.role}${a.isManager ? ', coordinator' : ''}) id=${a.id} status=${a.status}${a.activity ? ` — ${a.activity}` : ''}`;
 const describeTask = (t: Task, w: Snapshot) => {
   const who = w.agents.find((a) => a.id === t.assigneeId)?.name ?? 'unassigned';
   const project = w.projects.find((p) => p.id === t.projectId)?.name ?? '?';
