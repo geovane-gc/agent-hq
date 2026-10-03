@@ -58,6 +58,8 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'settings': return { ...world, settings: e.settings };
     case 'rate_limits': return e.userId === world.you.id ? { ...world, rateLimits: e.rateLimits } : world;
     case 'user': return { ...world, users: upsert(world.users, e.user), you: e.user.id === world.you.id ? e.user : world.you };
+    case 'account': return { ...world, accounts: upsert(world.accounts, e.account) };
+    case 'account_removed': return { ...world, accounts: without(world.accounts, e.id) };
     case 'presence': return { ...world, presence: [...world.presence.filter((p) => p.userId !== e.presence.userId), e.presence] };
     case 'presence_left': return { ...world, presence: world.presence.filter((p) => p.userId !== e.userId) };
     default: return world;
@@ -76,6 +78,10 @@ class Client {
   readonly terminal = new EventTarget();
   /** Raw agent-terminal output; the event type is the agent id. */
   readonly agentTerminals = new EventTarget();
+  /** Output of your Claude login terminals; the event type is the account id. */
+  readonly accountLogins = new EventTarget();
+  /** Everything a login terminal printed, so reopening it shows the whole flow. */
+  readonly loginHistory = new Map<ID, string>();
 
   constructor() {
     this.connect();
@@ -131,6 +137,9 @@ class Client {
         this.terminal.dispatchEvent(new CustomEvent('data', { detail: e.data }));
       } else if (e.type === 'agent_terminal_output') {
         this.agentTerminals.dispatchEvent(new CustomEvent(e.agentId, { detail: e.data }));
+      } else if (e.type === 'account_login_output') {
+        this.loginHistory.set(e.accountId, ((this.loginHistory.get(e.accountId) ?? '') + e.data).slice(-200_000));
+        this.accountLogins.dispatchEvent(new CustomEvent(e.accountId, { detail: e.data }));
       } else if (e.type === 'terminal_exit') {
         this.terminal.dispatchEvent(new CustomEvent('exit', { detail: e.code }));
       } else if (this.state.world) {

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { Integration, Invite, Snapshot } from '@agent-hq/protocol';
 import { client, run } from '../api.ts';
+import { AccountsPanel } from './Accounts.tsx';
 import { COLORS, LookPicker } from './forms.tsx';
 import { Modal } from './Modal.tsx';
 
-type Tab = 'general' | 'integrations' | 'team';
+type Tab = 'general' | 'integrations' | 'team' | 'accounts';
 
 function General({ world }: { world: Snapshot }) {
   const owner = world.you.role === 'owner';
@@ -122,7 +123,7 @@ function Team({ world }: { world: Snapshot }) {
         {world.users.map((u) => (
           <li key={u.id}>
             <span className="dot" style={{ background: u.color }} />
-            <strong>{u.name}</strong> {u.role === 'owner' ? '👑' : ''}
+            <strong>{u.name}</strong> <span className="chip">{u.role === 'owner' ? '👑 Boss' : 'Manager'}</span>
             <span className="muted"> {u.online ? 'online' : 'offline'} · agents {u.runnerOnline ? 'can work' : 'offline (runner not connected)'}</span>
             {owner && u.role !== 'owner' && (
               <button className="small ghost danger" onClick={() => run('remove_member', { id: u.id }).catch(() => {})}>Remove</button>
@@ -131,9 +132,10 @@ function Team({ world }: { world: Snapshot }) {
         ))}
       </ul>
 
-      {world.you.role === 'member' && (
+      {world.you.role === 'manager' && (
         <div className="callout">
-          <strong>Run your agents.</strong> Your agents work on <em>your</em> machine with <em>your</em> Claude Code login.
+          <strong>Run your agents.</strong> Your agents work on <em>your</em> machine with <em>your</em> Claude Code logins
+          (connect more in the Claude accounts tab).
           With Agent HQ cloned and installed, run:
           <pre>node packages/core/src/index.ts join {hostUrl} --token {client.token}</pre>
           Add <code>--repo "Project name=C:\path\to\clone"</code> to use an existing checkout; otherwise projects with a git remote are cloned automatically.
@@ -150,7 +152,7 @@ function Team({ world }: { world: Snapshot }) {
           <button onClick={() => {
             const name = window.prompt('Teammate name');
             if (name) client.request('create_invite', { name }).then(reload).catch(() => {});
-          }}>+ Invite teammate</button>
+          }}>+ Invite a manager</button>
           <ul className="people">
             {invites.map((i) => (
               <li key={i.id}>
@@ -174,10 +176,12 @@ export function SettingsModal({ world, onClose, initial = 'general' }: { world: 
         <button className={tab === 'general' ? 'active' : ''} onClick={() => setTab('general')}>General</button>
         <button className={tab === 'integrations' ? 'active' : ''} onClick={() => setTab('integrations')}>Integrations</button>
         <button className={tab === 'team' ? 'active' : ''} onClick={() => setTab('team')}>Team</button>
+        <button className={tab === 'accounts' ? 'active' : ''} onClick={() => setTab('accounts')}>Claude accounts</button>
       </div>
       {tab === 'general' && <General world={world} />}
       {tab === 'integrations' && <Integrations world={world} />}
       {tab === 'team' && <Team world={world} />}
+      {tab === 'accounts' && <AccountsPanel world={world} />}
     </Modal>
   );
 }
