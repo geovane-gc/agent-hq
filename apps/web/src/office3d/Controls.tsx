@@ -165,17 +165,26 @@ export function FirstPersonControls(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera]);
 
+  // The mouse listeners are attached once per mount. Re-running them on every
+  // render (presence updates re-render the scene several times a second)
+  // would tear down the pointer lock right after it is acquired, so the
+  // callbacks they need are read from a ref instead.
+  const callbacks = useRef(props);
+  callbacks.current = props;
+
   useEffect(() => {
     const el = gl.domElement;
-    props.lockRef.current = () => {
+    const lockRef = props.lockRef;
+    lockRef.current = () => {
       // Raw mouse input avoids OS acceleration and most of Chrome's jump glitches.
+      // Not every platform supports it: fall back to a plain lock (still within the click's activation window).
       const req = el.requestPointerLock({ unadjustedMovement: true } as PointerLockOptions) as unknown as Promise<void> | undefined;
-      req?.catch?.(() => el.requestPointerLock());
+      req?.catch?.(() => (el.requestPointerLock() as unknown as Promise<void> | undefined)?.catch?.(() => {}));
     };
     const onLockChange = () => {
       locked.current = document.pointerLockElement === el;
-      props.onLockChange(locked.current);
-      if (!locked.current) props.onHover(null);
+      callbacks.current.onLockChange(locked.current);
+      if (!locked.current) callbacks.current.onHover(null);
     };
     const onMouseMove = (e: MouseEvent) => {
       if (!locked.current) return;
@@ -195,13 +204,18 @@ export function FirstPersonControls(props: {
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mousedown', onMouseDown);
     return () => {
-      props.lockRef.current = null;
+      lockRef.current = null;
       document.removeEventListener('pointerlockchange', onLockChange);
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mousedown', onMouseDown);
       if (document.pointerLockElement === el) document.exitPointerLock();
+      if (locked.current) {
+        locked.current = false;
+        callbacks.current.onLockChange(false);
+      }
     };
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gl, props.lockRef]);
 
   function pick() {
     raycaster.current.setFromCamera(new THREE.Vector2(0, 0), camera);
