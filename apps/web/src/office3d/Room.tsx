@@ -1,11 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import * as THREE from 'three';
 import { Label } from './Label.tsx';
 import { Model } from './models.tsx';
 import type { FloorTheme, Task } from '@agent-hq/protocol';
-import { fixtures, meetingRoom, WALL_HEIGHT, windowSpots, type FloorPlan, type Rect } from './layout.ts';
+import { fixtures, meetingRoom, WALL_HEIGHT, windowSpots, type BalconyFront, type FloorPlan } from './layout.ts';
 import type { Interactable } from './interact.ts';
 import { Backdrop, ceilingColors, StyledFloor, StyledWall, useViewTexture } from './decor/RoomStyle.tsx';
-import type * as THREE from 'three';
 
 const WALL_H = WALL_HEIGHT;
 const CUTAWAY_H = 0.25;
@@ -25,6 +26,69 @@ function Glass(props: { from: [number, number]; to: [number, number] }) {
         <boxGeometry args={[len, 0.06, 0.08]} />
         <meshStandardMaterial color="#5a5f6a" metalness={0.2} />
       </mesh>
+    </group>
+  );
+}
+
+/** Within this distance of the door (first person), it slides open. */
+const DOOR_SENSE = 2.6;
+
+/**
+ * The sliding glass door out to the balcony, in the front wall at z: a dark
+ * metal frame and one glass leaf that slides open (to the left, inside the
+ * fixed glass) when you walk up to it.
+ */
+function SlidingDoor({ door, z }: { door: { minX: number; maxX: number }; z: number }) {
+  const leaf = useRef<THREE.Group>(null);
+  const open = useRef(0);
+  const { camera } = useThree();
+  const width = door.maxX - door.minX;
+  const cx = (door.minX + door.maxX) / 2;
+  useFrame((_, dt) => {
+    const near = Math.abs(camera.position.x - cx) < width / 2 + DOOR_SENSE && Math.abs(camera.position.z - z) < DOOR_SENSE && camera.position.y < WALL_H;
+    open.current = THREE.MathUtils.damp(open.current, near ? 1 : 0, 6, dt);
+    if (leaf.current) leaf.current.position.x = -open.current * (width - 0.12);
+  });
+  const metal = <meshStandardMaterial color="#4a505c" metalness={0.4} roughness={0.4} />;
+  return (
+    <group position={[cx, 0, z]}>
+      {[-width / 2, width / 2].map((x) => (
+        <mesh key={x} position={[x, 1.25, 0]} castShadow>
+          <boxGeometry args={[0.07, 2.5, 0.12]} />
+          {metal}
+        </mesh>
+      ))}
+      <mesh position={[0, 2.5, 0]}>
+        <boxGeometry args={[width + 0.07, 0.08, 0.12]} />
+        {metal}
+      </mesh>
+      <mesh position={[0, 0.006, 0]} receiveShadow>
+        <boxGeometry args={[width, 0.012, 0.2]} />
+        {metal}
+      </mesh>
+      {/* the leaf runs on the inside of the wall */}
+      <group ref={leaf} position={[0, 0, -0.07]}>
+        <mesh position={[0, 1.24, 0]} raycast={() => null}>
+          <boxGeometry args={[width - 0.04, 2.44, 0.03]} />
+          <meshPhysicalMaterial color="#bfe3ff" transparent opacity={0.22} roughness={0.05} depthWrite={false} />
+        </mesh>
+        {[-(width - 0.06) / 2, (width - 0.06) / 2].map((x) => (
+          <mesh key={x} position={[x, 1.24, 0]}>
+            <boxGeometry args={[0.05, 2.44, 0.04]} />
+            {metal}
+          </mesh>
+        ))}
+        {[0.04, 2.44].map((y) => (
+          <mesh key={y} position={[0, y, 0]}>
+            <boxGeometry args={[width - 0.04, 0.05, 0.04]} />
+            {metal}
+          </mesh>
+        ))}
+        <mesh position={[width / 2 - 0.12, 1.05, -0.04]}>
+          <boxGeometry args={[0.03, 0.5, 0.03]} />
+          <meshStandardMaterial color="#c9ccd2" metalness={0.7} roughness={0.3} />
+        </mesh>
+      </group>
     </group>
   );
 }
@@ -175,10 +239,11 @@ export function Room(props: {
   onTerminal: (() => void) | null;
   /** Unread reports in your inbox, shown on the boss computer. */
   unread?: number;
-  /** The balcony outside the front wall: that stretch of wall is glass. */
-  balcony: Rect;
+  /** The balcony outside the front wall: a stretch of that wall is glass, with a sliding door out. */
+  balcony: BalconyFront;
 }) {
-  const { plan, theme, balcony } = props;
+  const { plan, theme } = props;
+  const { glass: glazing, door } = props.balcony;
   const f = fixtures(plan);
   const sideH = props.cutaway ? CUTAWAY_H : WALL_H;
   const glass = theme.wall === 'glass';
@@ -197,7 +262,15 @@ export function Room(props: {
     <group>
       <StyledFloor plan={plan} theme={theme} />
       {!props.cutaway && <Ceiling plan={plan} {...ceilingColors(theme)} />}
-      {glass && <Backdrop plan={plan} theme={theme} cutaway={props.cutaway} />}
+      {/* the outside: through glass walls, and from the balcony (or its glass) when walking around */}
+      {(glass || !props.cutaway) && <Backdrop plan={plan} theme={theme} cutaway={props.cutaway} />}
+      {/* far below the balcony's railing: the street, fading into the haze */}
+      {!props.cutaway && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[(plan.minX + plan.maxX) / 2, -6, plan.maxZ + 40]} raycast={() => null}>
+          <planeGeometry args={[200, 80]} />
+          <meshStandardMaterial color="#8d949c" roughness={1} />
+        </mesh>
+      )}
       {/* back and left walls are always full height; front and right are cut away in the overview */}
       <StyledWall from={[plan.minX, plan.minZ]} to={[plan.maxX, plan.minZ]} height={WALL_H} theme={theme} />
       <StyledWall from={[plan.minX, plan.minZ]} to={[plan.minX, meeting.minZ]} height={WALL_H} theme={theme} />
@@ -206,13 +279,23 @@ export function Room(props: {
       <StyledWall from={[plan.maxX, plan.minZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
       {!props.cutaway ? (
         <>
-          <StyledWall from={[plan.minX, plan.maxZ]} to={[balcony.minX, plan.maxZ]} height={sideH} theme={theme} />
-          <Glass from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} />
-          <StyledWall from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} height={WALL_H - 2.5} theme={theme} y={2.5} />
-          <StyledWall from={[balcony.maxX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
+          <StyledWall from={[plan.minX, plan.maxZ]} to={[glazing.minX, plan.maxZ]} height={sideH} theme={theme} />
+          <Glass from={[glazing.minX, plan.maxZ]} to={[door.minX, plan.maxZ]} />
+          <SlidingDoor door={door} z={plan.maxZ} />
+          <Glass from={[door.maxX, plan.maxZ]} to={[glazing.maxX, plan.maxZ]} />
+          <StyledWall from={[glazing.minX, plan.maxZ]} to={[glazing.maxX, plan.maxZ]} height={WALL_H - 2.5} theme={theme} y={2.5} />
+          <StyledWall from={[glazing.maxX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
         </>
       ) : (
-        <StyledWall from={[plan.minX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
+        <>
+          {/* cut away, with the doorway left open */}
+          <StyledWall from={[plan.minX, plan.maxZ]} to={[door.minX, plan.maxZ]} height={sideH} theme={theme} />
+          <StyledWall from={[door.maxX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
+          <mesh position={[(door.minX + door.maxX) / 2, 0.006, plan.maxZ]} receiveShadow>
+            <boxGeometry args={[door.maxX - door.minX, 0.012, 0.2]} />
+            <meshStandardMaterial color="#4a505c" metalness={0.4} roughness={0.4} />
+          </mesh>
+        </>
       )}
       {/* accent stripe */}
       {!glass && <mesh position={[(plan.minX + plan.maxX) / 2, 0.9, plan.minZ + 0.08]}>

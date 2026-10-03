@@ -5,16 +5,15 @@ import type { Agent, ID, Task } from '@agent-hq/protocol';
 import { hash01 } from '../agentUtil.ts';
 import type { Interactable } from './interact.ts';
 import { Label } from './Label.tsx';
-import type { Balcony as BalconyLayout, Slot, Vec3 } from './layout.ts';
+import { balconyRoute, type Balcony as BalconyLayout, type Slot, type Vec3 } from './layout.ts';
 import { Character, EMBER_MATERIAL, Model } from './models.tsx';
 import { Workstation } from './Workstation.tsx';
 
 // The balcony: the project's repo agents (.claude/agents) hang out here
 // smoking until someone summons them; then they walk to a hot desk, work, and
-// walk back. Positions come from layout.ts; the server says where each one is.
+// walk back. Positions and walking routes come from layout.ts; the server
+// says where each one is.
 
-/** Where a repo agent sits at a hot desk (the Workstation's chair). */
-const chairOf = (desk: Slot): Vec3 => [desk.position[0], 0, desk.position[2] + 0.08];
 /** The lit end of the cigarette, in the character's local space. */
 const TIP: Vec3 = [0.038, 1.515, -0.235];
 
@@ -46,35 +45,54 @@ function Smoke() {
 }
 
 /** A repo agent away from the desks: smoking on the balcony, or walking to or from a hot desk. */
-function CrewMember(props: { agent: Agent; spot: { position: Vec3; rotation: number }; desk: Slot | null; onSummon: () => void }) {
-  const { agent, spot, desk } = props;
+function CrewMember(props: { agent: Agent; layout: BalconyLayout; spot: { position: Vec3; rotation: number }; desk: Slot | null; onSummon: () => void }) {
+  const { agent, layout, spot, desk } = props;
   const location = agent.repo?.location ?? 'balcony';
-  const target: Vec3 = location === 'to_desk' && desk ? chairOf(desk) : spot.position;
+  // Along the aisles between the smoking spot and the hot desk (layout.ts), or just to the spot.
+  const route = useMemo(() => {
+    if (!desk || (location !== 'to_desk' && location !== 'to_balcony')) return [spot.position];
+    const there = balconyRoute(layout, spot.position, desk);
+    return location === 'to_desk' ? there : there.reverse();
+  }, [layout, spot.position, desk, location]);
   const group = useRef<THREE.Group>(null);
-  const start = useRef<Vec3>(location === 'to_balcony' && desk ? chairOf(desk) : location === 'to_desk' ? spot.position : target);
+  const start = useRef<Vec3>(route[0]);
   const speed = useRef(1.5);
-  const walkingTo = useRef('');
+  const leg = useRef(0);
+  const following = useRef<Vec3[] | null>(null);
   const [walking, setWalking] = useState(false);
 
   useFrame((_, dt) => {
     const g = group.current;
     if (!g) return;
-    const to = new THREE.Vector3(...target);
-    if (walkingTo.current !== target.join()) {
+    if (following.current !== route) {
+      // A new route (or turning around halfway): pick it up at the waypoint after the nearest one.
+      following.current = route;
+      const near = route.map((p) => Math.hypot(p[0] - g.position.x, p[2] - g.position.z));
+      leg.current = Math.min(route.length - 1, near.indexOf(Math.min(...near)) + 1);
       // The server says "arrived" after a fixed walk time, so go fast enough to make it.
-      walkingTo.current = target.join();
-      speed.current = Math.max(1.5, g.position.distanceTo(to) / 2.2);
+      let length = near[leg.current];
+      for (let i = leg.current + 1; i < route.length; i++) length += Math.hypot(route[i][0] - route[i - 1][0], route[i][2] - route[i - 1][2]);
+      speed.current = Math.max(1.5, length / 2.2);
     }
-    const delta = to.clone().sub(g.position);
-    const distance = delta.length();
-    const moving = distance > 0.03;
-    if (moving !== walking) setWalking(moving);
+    let step = speed.current * Math.min(dt, 0.05);
     let heading = spot.rotation;
-    if (moving) {
-      g.position.add(delta.normalize().multiplyScalar(Math.min(distance, speed.current * Math.min(dt, 0.05))));
-      // The character faces -Z: heading is the angle that turns -Z towards the target.
-      heading = Math.atan2(-(to.x - g.position.x), -(to.z - g.position.z));
+    let going = false;
+    while (step > 0) {
+      const to = new THREE.Vector3(...route[leg.current]);
+      const delta = to.sub(g.position);
+      const distance = delta.length();
+      if (distance <= 0.03) {
+        if (leg.current >= route.length - 1) break;
+        leg.current++;
+        continue;
+      }
+      going = true;
+      // The character faces -Z: heading is the angle that turns -Z towards the waypoint.
+      heading = Math.atan2(-delta.x, -delta.z);
+      g.position.add(delta.normalize().multiplyScalar(Math.min(distance, step)));
+      step -= Math.min(distance, step);
     }
+    if (going !== walking) setWalking(going);
     let d = heading - g.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     g.rotation.y += d * Math.min(1, dt * 8);
@@ -223,8 +241,7 @@ export function Balcony(props: {
       <Railing from={[layout.minX, layout.maxZ]} to={[layout.maxX, layout.maxZ]} />
       <Railing from={[layout.minX, layout.minZ]} to={[layout.minX, layout.maxZ]} />
       <Railing from={[layout.maxX, layout.minZ]} to={[layout.maxX, layout.maxZ]} />
-      <Model name="plant" position={[layout.minX + 0.4, 0, layout.maxZ - 0.4]} />
-      <Model name="plant_tall" position={[layout.maxX - 0.35, 0, layout.minZ + 0.35]} scale={0.8} />
+      {layout.plants.map((p, i) => <Model key={i} name={p.tall ? 'plant_tall' : 'plant'} position={p.position} scale={p.tall ? 0.8 : 1} />)}
       {ashtrays.map((p, i) => <Ashtray key={i} position={p} />)}
       {layout.benches.map((p, i) => <Bench key={i} position={p} />)}
       <Label position={[layout.minX + 0.6, 1.35, layout.maxZ]} center distanceFactor={15} zIndexRange={[10, 0]}>
@@ -261,7 +278,7 @@ export function Balcony(props: {
       {crew.map((agent, i) => {
         if (agent.repo?.location === 'desk' || !layout.spots[i]) return null;
         const desk = agent.repo?.deskIndex != null ? layout.desks[agent.repo.deskIndex] ?? null : null;
-        return <CrewMember key={agent.id} agent={agent} spot={layout.spots[i]} desk={desk} onSummon={() => props.onSummon(agent.id)} />;
+        return <CrewMember key={agent.id} agent={agent} layout={layout} spot={layout.spots[i]} desk={desk} onSummon={() => props.onSummon(agent.id)} />;
       })}
     </group>
   );

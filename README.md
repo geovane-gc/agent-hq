@@ -68,8 +68,9 @@ into their monitor so you can type straight into their terminal.
 - **The balcony crew**: the agents a repository defines in `.claude/agents` hang out on the office balcony, smoking.
   Summon one with a job and it walks to a hot desk and runs `claude --agent <name>` (read-only agents work in the
   repository itself, agents that edit get their own worktree and branch). When it's done it mails you a report and goes
-  back to the balcony. They can't be fired. Every floor has a balcony; until its projects define agents it only has
-  empty benches (click them for how to add some, and to re-scan).
+  back to the balcony. They can't be fired. Every floor has a balcony, along most of the front wall; in walk mode you
+  go out through its sliding glass door. Until the floor's projects define agents it only has empty benches (click
+  them for how to add some, and to re-scan).
 - **Boss computer**: your mail: reports from the crew (reply to keep the conversation going: the agent resumes the same
   Claude Code session) and e-mail with your teammates, with their characters' portraits and a private, persistent
   history. For the owner, also a private shell on the host. Mail is reachable from any agent's monitor and the menu too.
