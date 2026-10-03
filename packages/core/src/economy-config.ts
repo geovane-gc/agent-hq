@@ -26,6 +26,14 @@ export const ECONOMY = {
    */
   sandboxChargesHiringFee: false,
 
+  // ------------------------------------------------------------ furnishings (decorate mode)
+  // Item and desk-upgrade prices live in the catalog (packages/protocol/src/catalog.ts).
+
+  /** Sandbox: whether decorations cost anything. Off: sandbox players decorate freely. */
+  sandboxChargesFurnishing: false,
+  /** Career: multiplier on catalog prices (tune the whole catalog at once). */
+  furnishingPriceFactor: 1,
+
   // ------------------------------------------------------------ payout for merged work
   // payout = (basePayout + perLine × min(lines, lineCap)) × tinyFactor
   // tinyFactor = 1 when lines ≥ tinyThreshold, else (lines / tinyThreshold)²
@@ -104,6 +112,11 @@ export function payoutFor(lines: number): number {
 
 export function hiringFeeFor(mode: OfficeMode): number {
   return mode === 'career' || ECONOMY.sandboxChargesHiringFee ? ECONOMY.hiringFee : 0;
+}
+
+/** What a catalog price costs in an office of this mode. */
+export function furnishingPriceFor(mode: OfficeMode, price: number): number {
+  return mode === 'career' || ECONOMY.sandboxChargesFurnishing ? round2(price * ECONOMY.furnishingPriceFactor) : 0;
 }
 
 export function startingCashFor(mode: OfficeMode): number {

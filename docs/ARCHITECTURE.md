@@ -28,6 +28,10 @@ claude --stdio--> hq-mcp.ts --ws--> host          (board tools for agents/coordi
 claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate limits)
 ```
 
+The customization catalog (every decoration, desk option, room style and theme, with prices) is data in
+`packages/protocol/src/catalog.ts`, shared by the host (validation, prices) and the web app (one 3D builder per item in
+`apps/web/src/office3d/decor/items.ts`). The color and appearance palettes live there too.
+
 ### packages/core
 
 | File | Role |
@@ -52,6 +56,7 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `whiteboards.ts` | Drawing boards (Excalidraw): per-office tables, element reconciliation, relaying changes and cursors to a board's viewers, debounced saves, pasted images and thumbnails. Its commands are routed by the server |
 | `folder-picker.ts` | The system folder chooser for browser players: AppleScript `choose folder` on macOS, a WinForms `FolderBrowserDialog` through PowerShell on Windows, zenity or kdialog on Linux. Cancel resolves null; one dialog at a time; closed after 10 minutes |
 | `mailbox.ts`, `player-mail.ts` | Mail. Agent reports are `mail` entities. Player-to-player mail lives in its own tables in the office database (`player_mail` plus one `player_mail_box` row per participant: sent/received, read, archived); every query is scoped to the caller's rows, events go only to participants, and deleting removes only your row |
+| `decor.ts` | Office customization: decorations per floor and desk setups per agent (entities `decor` and `desk_setup`), with career pricing through the ledger (`furnishing` entries: bought items cost their catalog price, sold ones refund it) |
 | `delivery.ts` | Git checks behind revenue: is a task branch merged into the default branch (merge, rebase or squash), and how many lines changed |
 | `media.ts` | Voice and screen sharing: who is in voice (runtime only), one screen share per floor's meeting room, WebRTC signaling relay to one player's tab, STUN/TURN settings (the TURN credential is kept out of the broadcast settings) |
 
@@ -72,6 +77,8 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `voice/engine.ts` | Voice and screen sharing in the browser: WebRTC mesh, mic and screen capture, Web Audio graph (gain by distance, panner, speaking detection), push-to-talk, local preferences |
 | `voice/spatial.ts` | Who hears whom: avatar positions (as `Players.tsx` draws them), meeting membership, channels, proximity gain |
 | `components/Voice.tsx` | Voice dock (mic, nearby/everyone, people and devices), meeting card, full-size shared screen |
+| `office3d/decor/*` | Decorate mode: item builders (`items.ts`; parts merged per material and drawn with instancing), placement and collisions, the in-scene editor, desk sets, room styles (floor, walls, windows, lighting presets) and building exteriors |
+| `components/Decorate.tsx` | Decorate mode's HUD: catalog with rendered thumbnails, room style and themes, desk upgrades, undo/redo |
 | `components/AgentTerminal.tsx` | An agent's real Claude Code terminal (xterm.js) shown on the zoomed monitor |
 | `components/Whiteboards.tsx`, `WhiteboardEditor.tsx` | The Whiteboards list and the full-screen editor; the editor (Excalidraw) is a lazy chunk loaded on first open |
 | `office3d/WhiteboardStand.tsx` | A drawing whiteboard in the world (easel or wall), showing its board's live thumbnail; placeable anywhere, bound to a board id or a spot |
@@ -256,6 +263,9 @@ use the commands.
   `whiteboard-anchor`): `OfficeScene` passes a wall `<WhiteboardStand>` sized to the anchor, at spot
   `meeting:<floorId>`, with a thin collider for its frame and tray. Like the partitions, it is hidden in the overview
   (find the board in Menu → Whiteboards there).
+  The partitions and the outer wall behind the screen take the floor's wall finish (solid even with the glass finish),
+  and the left wall has no windows there. Decorate mode may furnish the room's corners but keeps its door, the space
+  in front of the screen and of the whiteboard, and the screen's stretch of wall clear (`decor/placement.ts`).
 - **Electron**: `setupMedia` in `apps/desktop/main.cjs` grants microphone-only `media` and `speaker-selection` to the
   office's own origin (asking macOS for microphone access when needed), and answers `getDisplayMedia` with the system
   picker where there is one (macOS 15+), otherwise a small menu of screens and windows with thumbnails.

@@ -280,3 +280,16 @@ export function colliders(plan: FloorPlan, theme: FloorTheme): Rect[] {
   for (const s of m.seats) out.push(box(s.position[0], s.position[2], 0.24, 0.24));
   return out;
 }
+
+// ---------------------------------------------------------------- office customization
+// Shared by the room (where windows are drawn) and decorate mode (wall decor can't cover them).
+
+/** Window centers along the back wall (x) and the left wall (z); none behind the meeting room's wall screen. */
+export function windowSpots(plan: FloorPlan): { back: number[]; left: number[] } {
+  const back: number[] = [];
+  for (let x = plan.boss.maxX + 6.2; x < plan.maxX - 3.4; x += 3.2) back.push(x);
+  const meeting = meetingRoom(plan);
+  const left: number[] = [];
+  for (let z = plan.minZ + 1.5; z < plan.maxZ - 1; z += 3) if (z < meeting.minZ - 1 || z > meeting.maxZ + 1) left.push(z);
+  return { back, left };
+}

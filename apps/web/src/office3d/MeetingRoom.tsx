@@ -1,25 +1,24 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
-import type { Floor, Snapshot } from '@agent-hq/protocol';
+import type { Floor, FloorTheme, Snapshot } from '@agent-hq/protocol';
 import { openScreen, shareScreen, useVoice, voice } from '../voice/engine.ts';
 import type { Interactable } from './interact.ts';
+import { StyledWall } from './decor/RoomStyle.tsx';
 import { Label } from './Label.tsx';
 import { WALL_HEIGHT, type MeetingRoom as MeetingLayout, type WallMount } from './layout.ts';
 import { Model } from './models.tsx';
 
 const CUTAWAY_H = 0.25;
 
-/** A partition along X = x from z1 to z2 (cut down in the overview, like the other near walls). */
-function Partition(props: { x?: number; z?: number; from: number; to: number; height: number; color: string }) {
-  const len = Math.abs(props.to - props.from);
-  const mid = (props.from + props.to) / 2;
+/**
+ * A partition along x = `x` or z = `z` (cut down in the overview, like the other near walls), in the floor's
+ * wall finish. Always solid, even in a glass-walled room: the whiteboard hangs on it.
+ */
+function Partition(props: { x?: number; z?: number; from: number; to: number; height: number; theme: FloorTheme; y?: number }) {
   const alongZ = props.x !== undefined;
-  return (
-    <mesh position={alongZ ? [props.x!, props.height / 2, mid] : [mid, props.height / 2, props.z!]} castShadow receiveShadow>
-      <boxGeometry args={alongZ ? [0.12, props.height, len] : [len, props.height, 0.12]} />
-      <meshStandardMaterial color={props.color} roughness={0.95} />
-    </mesh>
-  );
+  const from: [number, number] = alongZ ? [props.x!, props.from] : [props.from, props.z!];
+  const to: [number, number] = alongZ ? [props.x!, props.to] : [props.to, props.z!];
+  return <StyledWall from={from} to={to} height={props.height} y={props.y} theme={props.theme} />;
 }
 
 /** Plays a MediaStream onto a plane, letterboxed into the screen. */
@@ -93,7 +92,7 @@ export function MeetingRoom(props: {
 }) {
   const { world, floor, layout: m } = props;
   const v = useVoice();
-  const wall = floor.theme.wallColor;
+  const theme = useMemo(() => (floor.theme.wall === 'glass' ? { ...floor.theme, wall: 'paint' as const } : floor.theme), [floor.theme]);
   const h = props.cutaway ? CUTAWAY_H : WALL_HEIGHT;
   const share = world.screenShares.find((s) => s.floorId === floor.id);
   const here = v.meetingFloorId === floor.id;
@@ -115,12 +114,7 @@ export function MeetingRoom(props: {
     <button className="tag sign screen-caption" onClick={interact.action}>🎥 Meeting room{here && v.joined ? ' · Share screen' : ''}</button>
   );
 
-  const doorTop = props.cutaway ? null : (
-    <mesh position={[m.maxX, 2.6, (m.door.minZ + m.door.maxZ) / 2]}>
-      <boxGeometry args={[0.12, 0.8, m.door.maxZ - m.door.minZ]} />
-      <meshStandardMaterial color={wall} roughness={0.95} />
-    </mesh>
-  );
+  const doorTop = props.cutaway ? null : <Partition x={m.maxX} from={m.door.minZ} to={m.door.maxZ} height={0.8} y={2.2} theme={theme} />;
 
   return (
     <group>
@@ -130,10 +124,10 @@ export function MeetingRoom(props: {
         <meshStandardMaterial color="#2f3a4a" roughness={1} />
       </mesh>
       {/* partition with a door next to the open-plan area, and a front partition when the floor is deeper */}
-      <Partition x={m.maxX} from={m.minZ} to={m.door.minZ} height={h} color={wall} />
-      <Partition x={m.maxX} from={m.door.maxZ} to={m.maxZ} height={h} color={wall} />
+      <Partition x={m.maxX} from={m.minZ} to={m.door.minZ} height={h} theme={theme} />
+      <Partition x={m.maxX} from={m.door.maxZ} to={m.maxZ} height={h} theme={theme} />
       {doorTop}
-      {m.frontWall && <Partition z={m.maxZ} from={m.minX} to={m.maxX} height={h} color={wall} />}
+      {m.frontWall && <Partition z={m.maxZ} from={m.minX} to={m.maxX} height={h} theme={theme} />}
       {/* table and chairs */}
       <group position={[m.center[0], 0, m.center[2]]}>
         <mesh position={[0, 0.74, 0]} castShadow receiveShadow>

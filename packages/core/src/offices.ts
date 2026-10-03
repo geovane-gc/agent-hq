@@ -6,6 +6,7 @@ import type { HostCommandName, HostCommands, ID, OfficeInfo, OfficeMode } from '
 import type { AgentAdapter } from './adapters/adapter.ts';
 import type { Config } from './config.ts';
 import { Db } from './db.ts';
+import { Decor } from './decor.ts';
 import { Economy } from './economy.ts';
 import { MachineAccounts } from './machine-accounts.ts';
 import { Orchestrator } from './orchestrator.ts';
@@ -47,6 +48,7 @@ export interface OpenOffice {
   economy: Economy;
   /** Drawing boards (see whiteboards.ts); their commands are routed by the server. */
   whiteboards: Whiteboards;
+  decor: Decor;
 }
 
 export const HOST_COMMANDS = new Set<string>(['list_offices', 'create_office', 'open_office', 'get_ledger', 'check_deliveries'] satisfies HostCommandName[]);
@@ -164,6 +166,8 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
     const officeInfo = info(entry);
     const economy = new Economy(db, store, officeInfo);
     orchestrator.economy = economy;
+    const decor = new Decor(db, store, economy);
+    orchestrator.decor = decor;
     const owner = orchestrator.ensureOwner();
     this.accounts.attach(store, db, owner.id);
     orchestrator.boot(new LocalRunner({
@@ -178,7 +182,7 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
     }));
     economy.start();
     const whiteboards = new Whiteboards(db, store);
-    this.current = { info: officeInfo, dataDir, db, store, orchestrator, economy, whiteboards };
+    this.current = { info: officeInfo, dataDir, db, store, orchestrator, economy, whiteboards, decor };
     this.emit('opened', this.current);
     return officeInfo;
   }
@@ -195,6 +199,7 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
     this.current = null;
     office.economy.stop();
     office.whiteboards.flush();
+    office.decor.stop();
     this.emit('closed', office);
     // Let agent processes exit cleanly, but never hang the switch. The old
     // database stays open: late session events may still write to it.

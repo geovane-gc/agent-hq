@@ -93,15 +93,26 @@ export interface Building {
   name: string;
   kind: BuildingKind;
   color: string;
+  /** Exterior material (customization); missing on older saves = paint. */
+  facade?: FacadeMaterial;
+  /** Rooftop sign text; missing or empty = the company (office) name. */
+  sign?: string | null;
   createdAt: number;
 }
 
-export type FloorMaterial = 'wood' | 'carpet' | 'concrete' | 'tiles';
+/** Options for each of these are listed in catalog.ts. */
+export type FloorMaterial = 'wood' | 'wood_light' | 'wood_dark' | 'herringbone' | 'carpet' | 'carpet_gray' | 'concrete' | 'tiles' | 'checker' | 'terrazzo';
 
 export interface FloorTheme {
   floor: FloorMaterial;
+  /** Wall finish; `wallColor` tints it (glass ignores it). */
+  wall: WallFinish;
   wallColor: string;
   accentColor: string;
+  /** Light color and intensity in the room, and the time of day outside. */
+  lighting: LightingPreset;
+  /** What the windows look out on. */
+  view: WindowView;
   plants: boolean;
   lounge: boolean;
 }
@@ -328,7 +339,7 @@ export interface TakeoverRequest {
   createdAt: number;
 }
 
-export interface Snapshot extends TycoonSnapshot, PlayerMailSnapshot, MediaSnapshot {
+export interface Snapshot extends TycoonSnapshot, PlayerMailSnapshot, MediaSnapshot, DecorSnapshot {
   you: User;
   users: User[];
   /** Everyone's connected Claude accounts (metadata only). */
@@ -387,15 +398,16 @@ export type ServerEvent =
   | TycoonEvent
   | WhiteboardEvent
   | PlayerMailEvent
-  | MediaEvent;
+  | MediaEvent
+  | DecorEvent;
 
 // ---------------------------------------------------------------- commands (client -> server)
 
 type AgentEditable = 'name' | 'role' | 'model' | 'instructions' | 'permissionMode' | 'floorId' | 'isManager' | 'integrations' | 'appearance';
 
-export interface Commands extends HostCommands, WhiteboardCommands, PlayerMailCommands, MediaCommands {
+export interface Commands extends HostCommands, WhiteboardCommands, PlayerMailCommands, MediaCommands, DecorCommands {
   create_building: { args: { name: string; kind: BuildingKind; color?: string }; result: Building };
-  update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color'>> }; result: Building };
+  update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color' | 'facade' | 'sign'>> }; result: Building };
   remove_building: { args: { id: ID }; result: null };
   create_floor: { args: { buildingId: ID; name: string }; result: Floor };
   update_floor: { args: { id: ID; patch: Partial<Pick<Floor, 'name' | 'desks' | 'theme'>> }; result: Floor };
@@ -653,6 +665,8 @@ export type LedgerKind =
   /** API-equivalent token cost, rolled up per day, agent and task. */
   | 'token_cost'
   | 'hiring_fee'
+  /** Decorations and desk upgrades bought (negative) or sold back (positive): an investment, like hiring. */
+  | 'furnishing'
   | 'adjustment';
 
 /** Filter for get_ledger: one kind, or every income / every expense. */
@@ -681,7 +695,7 @@ export interface EconomySummary {
   expenses: number;
   /** revenue − expenses. */
   profit: number;
-  /** Hiring fees paid so far: an investment, so it lowers cash but not profit. */
+  /** Hiring fees and furnishings paid so far (net of items sold): an investment, so it lowers cash but not profit. */
   invested: number;
   /** Income booked today (local time), counted against the daily cap. */
   earnedToday: number;
@@ -993,3 +1007,82 @@ export interface MediaCommands {
     result: VoiceSettings;
   };
 }
+
+// ================================================================ office customization (decorate mode)
+// Decorations placed per floor and desk setups per agent, persisted on the
+// host in the office database. The catalog of items, desk options and room
+// styles is data in ./catalog.ts. Hooked into the types above through
+// `Snapshot extends DecorSnapshot`, `ServerEvent | DecorEvent`,
+// `Commands extends DecorCommands` and the new FloorTheme / Building fields.
+
+export type WallFinish = 'paint' | 'brick' | 'wood' | 'concrete' | 'glass';
+export type LightingPreset = 'daylight' | 'warm' | 'cool' | 'evening' | 'night';
+export type WindowView = 'city' | 'park' | 'sea';
+export type FacadeMaterial = 'paint' | 'glass' | 'brick' | 'concrete' | 'wood';
+
+/** A catalog item placed on a floor. */
+export interface DecorItem {
+  id: ID;
+  floorId: ID;
+  /** Catalog id (catalog.ts). */
+  itemId: string;
+  /** Center of its footprint on the floor plan (wall items: on the wall's surface). */
+  x: number;
+  z: number;
+  /** Quarter turns around Y (0–3). Wall items always face into the room. */
+  rotation: number;
+  /** For tintable items; null = the catalog default. */
+  color: string | null;
+  /** What it cost (0 in sandbox), refunded when it is sold. */
+  paid: number;
+  createdAt: number;
+}
+
+export type DeskModel = 'classic' | 'walnut' | 'white' | 'black';
+export type ChairModel = 'office' | 'gaming' | 'executive';
+export type DeskItem = 'mug' | 'stationery' | 'plant' | 'lamp' | 'figure' | 'photo' | 'books';
+
+export interface DeskStyle {
+  desk: DeskModel;
+  chair: ChairModel;
+  monitors: 1 | 2 | 3;
+  items: DeskItem[];
+}
+
+/** An upgraded desk; it belongs to the agent sitting at it. Other desks are BASIC_DESK. */
+export interface DeskSetup {
+  agentId: ID;
+  style: DeskStyle;
+  /** What the upgrades cost (0 in sandbox), refunded when downgraded or the agent leaves. */
+  paid: number;
+}
+
+export interface DecorSnapshot {
+  decor: DecorItem[];
+  desks: DeskSetup[];
+}
+
+export type DecorEvent =
+  | { type: 'decor'; item: DecorItem }
+  | { type: 'decor_removed'; id: ID }
+  | { type: 'desk_setup'; setup: DeskSetup }
+  | { type: 'desk_setup_removed'; agentId: ID };
+
+export interface DecorCommands {
+  /**
+   * Owner only. Buys (career: the catalog price, through the ledger) and
+   * places an item. The client picks the id, so undo/redo can restore it.
+   */
+  place_decor: { args: { id: ID; floorId: ID; itemId: string; x: number; z: number; rotation: number; color?: string | null }; result: DecorItem };
+  /** Owner only. Moves, turns or recolors an item (free). */
+  update_decor: { args: { id: ID; patch: Partial<Pick<DecorItem, 'x' | 'z' | 'rotation' | 'color'>> }; result: DecorItem };
+  /** Owner only. Sells an item back (refunds what it cost) and removes it. */
+  remove_decor: { args: { id: ID }; result: null };
+  /**
+   * The boss or the agent's owner. Career: pays the difference in upgrade
+   * value (or gets it back). null resets to the basic desk.
+   */
+  set_desk_style: { args: { agentId: ID; style: DeskStyle | null }; result: DeskSetup | null };
+}
+
+export type DecorCommandName = keyof DecorCommands;

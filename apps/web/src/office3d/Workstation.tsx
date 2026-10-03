@@ -1,14 +1,15 @@
 import { useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { Agent, AgentStatus, Task } from '@agent-hq/protocol';
+import type { Agent, AgentStatus, DeskStyle, Task } from '@agent-hq/protocol';
 import { COORDINATOR, hash01, level, STATUS_ICON, STATUS_LABEL } from '../agentUtil.ts';
 import { useClient } from '../api.ts';
 import { accountOf, planLabel } from '../components/Accounts.tsx';
 import { humanize } from '../format.ts';
 import type { Interactable } from './interact.ts';
 import { Label } from './Label.tsx';
-import { Character, Model, type CharacterClip } from './models.tsx';
+import { DeskSet } from './decor/DeskSet.tsx';
+import { Character, type CharacterClip } from './models.tsx';
 import { getCodeTexture } from './textures.ts';
 
 // One desk: table, monitor, keyboard, chair and (if staffed) the agent.
@@ -96,6 +97,8 @@ export function Workstation(props: {
   selected: boolean;
   gamification: boolean;
   canRecruit: boolean;
+  /** Desk upgrades (decorate mode); null = the basic desk. */
+  deskStyle?: DeskStyle | null;
   onSelect: () => void;
   onRecruit: () => void;
 }) {
@@ -109,10 +112,7 @@ export function Workstation(props: {
 
   return (
     <group position={props.position} rotation={[0, props.rotation, 0]} userData={{ interact }}>
-      <Model name="desk" position={[0, 0, -0.5]} recolor={{ Accent: props.accent }} />
-      <Model name="monitor" position={[0, 0.765, -0.72]} replace={screenReplace} />
-      <Model name="keyboard" position={[0, 0.765, -0.3]} />
-      <Model name="chair" position={[0, 0, 0.05]} recolor={{ Upholstery: agent ? agent.appearance.shirt : '#5b6170' }} />
+      <DeskSet style={props.deskStyle ?? null} accent={props.accent} upholstery={agent ? agent.appearance.shirt : '#5b6170'} screen={screenReplace} />
       {agent && agent.status !== 'offline' && (
         <group position={[0, 0, 0.08]}>
           <Character appearance={agent.appearance} clip={CLIPS[agent.status]} phase={hash01(agent.id)} />

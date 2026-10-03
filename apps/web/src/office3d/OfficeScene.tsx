@@ -9,6 +9,9 @@ import { CameraFly, FirstPersonControls, IsoControls, type CameraMode } from './
 import { findInteractable } from './interact.ts';
 import { HtmlLayer, LabelScale } from './Label.tsx';
 import { Balcony } from './Balcony.tsx';
+import { DecorLayer } from './decor/DecorEditor.tsx';
+import { SceneLighting } from './decor/lighting.tsx';
+import { decorColliders } from './decor/placement.ts';
 import { balconyLayout, colliders, fixtures, floorPlan, meetingRoom, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
 import { MeetingRoom } from './MeetingRoom.tsx';
 import { Players } from './Players.tsx';
@@ -102,10 +105,13 @@ export function OfficeScene(props: {
   onSummon: (agentId: ID) => void;
   /** Click on the balcony while it has no agents. */
   onEmptyBalcony: () => void;
+  /** Decorate mode: clicks place and pick decorations instead of using things. */
+  decorating?: boolean;
 }) {
   const { world, floor } = props;
   const plan = useMemo(() => floorPlan(floor.desks), [floor.desks]);
   const fx = useMemo(() => fixtures(plan), [plan]);
+  const decor = useMemo(() => world.decor.filter((d) => d.floorId === floor.id), [world.decor, floor.id]);
   const meeting = useMemo(() => meetingRoom(plan), [plan]);
   // The drawing whiteboard's easel, by the task board.
   const easel = useMemo(() => easelPlacement(plan), [plan]);
@@ -115,10 +121,11 @@ export function OfficeScene(props: {
     const wallBoard = toWorld([anchor.position[0], 0, anchor.position[2]], anchor.rotation, [0, 0, 0.05]);
     return [
       ...colliders(plan, floor.theme),
+      ...decorColliders(decor),
       whiteboardCollider(easel.position, easel.rotation),
       whiteboardCollider(wallBoard, anchor.rotation, anchor.width, 'wall'),
     ];
-  }, [plan, floor.theme, easel, meeting]);
+  }, [plan, floor.theme, easel, meeting, decor]);
   const agents = world.agents.filter((a) => a.floorId === floor.id && a.kind !== 'repo').sort((a, b) => a.createdAt - b.createdAt);
   // Repo agents (.claude/agents of this floor's projects) live on the balcony. Every floor has one, crew or not.
   const crew = world.agents.filter((a) => a.floorId === floor.id && a.kind === 'repo').sort((a, b) => a.createdAt - b.createdAt);
@@ -156,7 +163,7 @@ export function OfficeScene(props: {
   }, [floor.id, props.mode]);
 
   const onClick = (e: ThreeEvent<MouseEvent>) => {
-    if (props.mode !== 'iso' || props.focusAgentId) return;
+    if (props.mode !== 'iso' || props.focusAgentId || props.decorating) return;
     const i = findInteractable(e.object);
     if (i) {
       e.stopPropagation();
@@ -164,7 +171,7 @@ export function OfficeScene(props: {
     }
   };
   const onPointerMove = (e: ThreeEvent<PointerEvent>) => {
-    if (props.mode !== 'iso') return;
+    if (props.mode !== 'iso' || props.decorating) return;
     const i = findInteractable(e.object);
     document.body.style.cursor = i ? 'pointer' : '';
     setHover(i?.label ?? null);
@@ -175,21 +182,7 @@ export function OfficeScene(props: {
       <HtmlLayer.Provider value={htmlLayer}>
       <LabelScale.Provider value={props.mode === 'first' ? 0.35 : 1}>
       <Canvas shadows dpr={[1, 2]} camera={{ fov: props.mode === 'first' ? 70 : 42, near: 0.03, far: 200 }} key={props.mode}>
-        <color attach="background" args={['#cfd8e3']} />
-        <fog attach="fog" args={['#cfd8e3', 40, 90]} />
-        <hemisphereLight args={['#ffffff', '#8a7a66', props.mode === 'first' ? 1.25 : 0.9]} />
-        <directionalLight
-          position={[plan.center[0] + 8, 14, plan.center[2] + 6]}
-          intensity={props.mode === 'first' ? 1.1 : 1.6}
-          castShadow
-          shadow-mapSize={[2048, 2048]}
-          shadow-camera-left={-span}
-          shadow-camera-right={span}
-          shadow-camera-top={span}
-          shadow-camera-bottom={-span}
-          shadow-bias={-0.0004}
-          shadow-normalBias={0.03}
-        />
+        <SceneLighting preset={floor.theme.lighting} firstPerson={props.mode === 'first'} plan={plan} span={span} />
         <Suspense fallback={null}>
         <group onClick={onClick} onPointerMove={onPointerMove} onPointerOut={() => { document.body.style.cursor = ''; setHover(null); }}>
           <Room
@@ -233,6 +226,7 @@ export function OfficeScene(props: {
             onOpenAgent={props.onOpenAgent}
             onEmpty={props.onEmptyBalcony}
           />
+          <DecorLayer floor={floor} plan={plan} items={decor} decorating={!!props.decorating} />
           {plan.slots.map((slot) => {
             const agent = agents[slot.index] ?? null;
             return (
@@ -246,6 +240,7 @@ export function OfficeScene(props: {
                 selected={!!agent && agent.id === props.focusAgentId}
                 gamification={world.settings.gamification}
                 canRecruit={canRecruit}
+                deskStyle={agent ? world.desks.find((d) => d.agentId === agent.id)?.style ?? null : null}
                 onSelect={() => agent && props.onOpenAgent(agent.id)}
                 onRecruit={props.onRecruit}
               />
@@ -270,7 +265,7 @@ export function OfficeScene(props: {
       </Canvas>
       </LabelScale.Provider>
       </HtmlLayer.Provider>
-      <div ref={htmlLayer} className={`html-layer ${props.focusAgentId ? 'hidden' : ''}`} />
+      <div ref={htmlLayer} className={`html-layer ${props.focusAgentId ? 'hidden' : ''} ${props.decorating ? 'decorating' : ''}`} />
 
       {props.mode === 'first' && !props.focusAgentId && (
         <>
