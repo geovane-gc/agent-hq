@@ -81,7 +81,7 @@ export async function join(argv: string[]) {
           send({ type: 'runner_event', sessionKey: key, event });
         });
         sessions.set(key, session);
-        console.log(`▶ ${op.start.agent.name}: ${op.start.task?.title ?? 'conversation'}`);
+        console.log(`▶ ${op.start.agent.name}${op.start.repoAgentName ? ' (repo agent)' : ''}: ${op.start.task?.title ?? 'conversation'}`);
         return;
       }
       case 'send': return sessions.get(op.sessionKey)?.send(op.text);
@@ -103,7 +103,7 @@ export async function join(argv: string[]) {
       }
       // Claude accounts: logins happen here, on your machine; the host only sees email and plan.
       case 'account_status': return reply(op.requestKey, () => runner!.accountStatus(op.configDirs));
-      case 'account_remove': return reply(op.requestKey, () => runner!.accountRemove(op.configDir));
+      case 'account_remove': return reply(op.requestKey, () => runner!.accountRemove(op.configDir, op.email ?? null));
       case 'account_login': {
         const key = op.requestKey;
         try {
@@ -117,6 +117,7 @@ export async function join(argv: string[]) {
         }
         return;
       }
+      case 'scan_agents': return reply(op.requestKey, () => runner!.scanAgents(op.project));
       case 'handoff':
         console.log(`⇄ Handing off "${op.task.title}"`);
         return reply(op.requestKey, () => runner!.handoff(op.project, op.task));

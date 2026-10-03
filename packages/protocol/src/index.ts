@@ -156,7 +156,7 @@ export type RepoAgentLocation = 'balcony' | 'to_desk' | 'desk' | 'to_balcony';
 
 export interface RepoAgentInfo {
   projectId: ID;
-  /** Name passed to `claude --agent` (the file name in .claude/agents without .md). */
+  /** Name passed to `claude --agent`: the `name` in the agent file's frontmatter (usually its file name without .md). */
   agentName: string;
   description: string;
   /** No edit/write tools in its definition: runs directly in the repo instead of a worktree. */
@@ -301,6 +301,29 @@ export interface Settings {
   dispatchMode: 'auto' | 'manual';
   gamification: boolean;
   integrations: Integration[];
+  /**
+   * approval: taking over another player's agent needs that player's OK
+   * (a TakeoverRequest). free: anyone may take over right away.
+   */
+  takeoverPolicy: 'approval' | 'free';
+}
+
+/**
+ * A player asked to take over an agent running on someone else's account
+ * (takeoverPolicy 'approval'). The player whose account runs the agent
+ * approves or denies it; the requester may cancel it while it is pending.
+ */
+export interface TakeoverRequest {
+  id: ID;
+  agentId: ID;
+  /** Who wants the work. */
+  requesterId: ID;
+  /** Whose account runs the agent now: the one who decides. */
+  ownerId: ID;
+  /** Requester's account to continue on (null = their default login). */
+  accountId: ID | null;
+  status: 'pending' | 'approved' | 'denied' | 'cancelled';
+  createdAt: number;
 }
 
 export interface Snapshot extends TycoonSnapshot {
@@ -320,6 +343,8 @@ export interface Snapshot extends TycoonSnapshot {
   /** Your own subscription meters (each player has their own). */
   rateLimits: RateLimits | null;
   presence: Presence[];
+  /** Pending takeover requests (everyone sees them; only the agent's owner decides). */
+  takeovers: TakeoverRequest[];
   terminalAvailable: boolean;
 }
 
@@ -344,6 +369,9 @@ export type ServerEvent =
   | { type: 'user'; user: User }
   | { type: 'account'; account: ClaudeAccount }
   | { type: 'account_removed'; id: ID }
+  /** A takeover request was created or decided (decided ones are followed by takeover_removed). */
+  | { type: 'takeover'; takeover: TakeoverRequest }
+  | { type: 'takeover_removed'; id: ID }
   /** Sent only to the recipient. */
   | { type: 'mail'; mail: Mail }
   /** Output of an account login terminal (`claude auth login`), sent to the account's owner. */
@@ -437,14 +465,21 @@ export interface Commands extends HostCommands {
   account_login_input: { args: { accountId: ID; data: string }; result: null };
   /** Re-checks login status (email, plan) of your accounts. */
   refresh_accounts: { args: Record<string, never>; result: ClaudeAccount[] };
-  remove_account: { args: { id: ID }; result: null };
+  /** Logs the account out on your machine and deletes its config dir; `warning` when that could not be done safely. */
+  remove_account: { args: { id: ID }; result: { loggedOut: boolean; warning: string | null } };
   /** Which of your accounts an agent of yours runs on (applies from its next session). */
   set_agent_account: { args: { agentId: ID; accountId: ID | null }; result: Agent };
   /**
    * Moves an agent's work onto your machine and account: its current
-   * task/branch continues in a new session of yours, with a handoff summary.
+   * task/branch (or its current run, for repo agents) continues in a new
+   * session of yours, with a handoff summary. With takeoverPolicy 'approval'
+   * it only files a request (`request`) for the agent's owner to decide.
    */
-  take_over_agent: { args: { agentId: ID; accountId?: ID | null }; result: Agent };
+  take_over_agent: { args: { agentId: ID; accountId?: ID | null }; result: { agent: Agent; request: TakeoverRequest | null } };
+  /** The agent's owner approves (the takeover runs) or denies a request. */
+  respond_takeover: { args: { id: ID; approve: boolean }; result: null };
+  /** The requester withdraws a pending request. */
+  cancel_takeover: { args: { id: ID }; result: null };
   get_usage_report: { args: Record<string, never>; result: UsageReport };
   update_settings: { args: { patch: Partial<Settings> }; result: Settings };
   // multiplayer
@@ -528,8 +563,11 @@ export type RunnerOp =
    * then 'exit'. Keystrokes and close use pty_input / close with sessionKey = requestKey.
    */
   | { op: 'account_login'; requestKey: string; configDir: string }
-  /** Deletes an account's config dir (never the default login); answered with runner_reply. */
-  | { op: 'account_remove'; requestKey: string; configDir: string }
+  /**
+   * Logs an account out (`claude auth logout`, only when `claude auth status` in that dir
+   * shows `email`) and deletes its config dir. Never the default login. Answered with runner_reply.
+   */
+  | { op: 'account_remove'; requestKey: string; configDir: string; email: string | null }
   /** Before a takeover: commit WIP on the task branch and push it if there is an origin; answered with runner_reply. */
   | { op: 'handoff'; requestKey: string; project: Project; task: Task };
 

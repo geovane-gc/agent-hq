@@ -171,7 +171,11 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
   }
 
   const isOwner = (a: Actor) => a.kind === 'user' && a.user.role === 'owner';
-  const onStoreEvent = (event: ServerEvent) => broadcast(event, event.type === 'rate_limits' ? (a) => a.kind === 'user' && a.user.id === event.userId : undefined);
+  const onStoreEvent = (event: ServerEvent) => {
+    // Meters and mail are private to one player.
+    const to = event.type === 'rate_limits' ? event.userId : event.type === 'mail' ? event.mail.toUserId : null;
+    broadcast(event, to ? (a) => a.kind === 'user' && a.user.id === to : undefined);
+  };
   const onAgentTerminal = (agentId: string, data: string) => {
     const msg = JSON.stringify({ type: 'event', event: { type: 'agent_terminal_output', agentId, data } } satisfies ServerMessage);
     for (const [ws, set] of watching) if (set.has(agentId) && ws.readyState === WebSocket.OPEN) ws.send(msg);

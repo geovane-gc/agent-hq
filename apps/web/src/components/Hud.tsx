@@ -58,6 +58,8 @@ export function StatusCard(props: {
 }) {
   const { floor, building } = props;
   const counts = countBy(props.agents);
+  // Repo agents live on the balcony: they don't take desks.
+  const seated = props.agents.filter((a) => a.kind !== 'repo').length;
   return (
     <section className="status-card" aria-label="Status">
       <button
@@ -73,7 +75,7 @@ export function StatusCard(props: {
             <span className="place-text">
               <span className="eyebrow">
                 {building ? `${BUILDING_ICON[building.kind]} ${building.name}` : 'Agent HQ'}
-                <span title={`${props.agents.length} of ${floor.desks} desks taken`}> · {props.agents.length}/{floor.desks} desks</span>
+                <span title={`${seated} of ${floor.desks} desks taken`}> · {seated}/{floor.desks} desks</span>
               </span>
               <strong>{floor.name}</strong>
             </span>
@@ -223,11 +225,12 @@ function NoteCard({ note, onDismiss }: { note: Note; onDismiss: () => void }) {
  * Approval requests (while they last), finished or failed tasks and errors,
  * stacked as small cards in the bottom-left corner.
  */
-export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) => void; onBoard: () => void }) {
+export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) => void; onBoard: () => void; onInbox: (mailId: ID) => void }) {
   const { world } = props;
   const [events, setEvents] = useState<Note[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const lastStatus = useRef<Map<ID, TaskStatus> | null>(null);
+  const seenMail = useRef<Set<ID> | null>(null);
 
   const push = (note: Note, ttl: number) => {
     setEvents((list) => [...list.filter((n) => n.id !== note.id), note].slice(-4));
@@ -236,7 +239,9 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
 
   useEffect(() => {
     const on = (e: Event) => push({ id: `err-${Date.now()}-${Math.random()}`, tone: 'error', icon: '⚠️', title: 'That didn’t work', text: String((e as CustomEvent).detail) }, 8000);
+    const notice = (e: Event) => push({ id: `notice-${Date.now()}-${Math.random()}`, tone: 'success', icon: '⇄', title: 'Takeover', text: String((e as CustomEvent).detail) }, 10000);
     window.addEventListener('hq-error', on);
+    window.addEventListener('hq-notice', notice);
     // Tycoon: revenue for merged work (see Finance.tsx).
     const onLedger = (e: Event) => {
       const entry = (e as CustomEvent<LedgerEntry>).detail;
@@ -244,7 +249,11 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
       push({ id: `ledger-${entry.id}`, tone: 'success', icon: '💰', title: `+${usd(entry.amount)} earned`, text: entry.description, action: { label: 'Finances', run: openFinances } }, 10000);
     };
     window.addEventListener('hq-ledger', onLedger);
-    return () => { window.removeEventListener('hq-error', on); window.removeEventListener('hq-ledger', onLedger); };
+    return () => {
+      window.removeEventListener('hq-error', on);
+      window.removeEventListener('hq-notice', notice);
+      window.removeEventListener('hq-ledger', onLedger);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -256,13 +265,29 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
     for (const t of world.tasks) {
       const before = prev.get(t.id);
       if (!before || before === t.status) continue;
-      const who = world.agents.find((a) => a.id === t.assigneeId)?.name ?? 'An agent';
+      const assignee = world.agents.find((a) => a.id === t.assigneeId);
+      // Repo agents report by mail instead (below).
+      if (assignee?.kind === 'repo') continue;
+      const who = assignee?.name ?? 'An agent';
       const open = { label: 'Open board', run: props.onBoard };
       if (t.status === 'review') push({ id: `task-${t.id}`, tone: 'success', icon: '✅', title: `${who} finished a task`, text: `“${t.title}” is ready for review.`, action: open }, 12000);
       if (t.status === 'failed') push({ id: `task-${t.id}`, tone: 'error', icon: '❌', title: 'A task failed', text: `“${t.title}” (${who})`, action: open }, 12000);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [world.tasks]);
+
+  // "You've got mail": reports from the balcony crew.
+  useEffect(() => {
+    const seen = seenMail.current;
+    seenMail.current = new Set(world.mail.map((m) => m.id));
+    if (!seen) return;
+    for (const m of world.mail) {
+      if (seen.has(m.id) || m.read) continue;
+      const who = world.agents.find((a) => a.id === m.fromAgentId)?.name ?? 'An agent';
+      push({ id: `mail-${m.id}`, tone: 'success', icon: '📧', title: `${who} sent you a report`, text: m.subject, action: { label: 'Read', run: () => props.onInbox(m.id) } }, 15000);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [world.mail]);
 
   const approvals: Note[] = world.agents
     .filter((a) => a.status === 'awaiting_approval' && a.ownerId === world.you.id)
@@ -279,7 +304,9 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
       };
     });
 
-  const visible = [...approvals.filter((n) => !dismissed.has(n.id)), ...events];
+  // A mail card goes away once that report is read.
+  const unreadMail = new Set(world.mail.filter((m) => !m.read).map((m) => `mail-${m.id}`));
+  const visible = [...approvals.filter((n) => !dismissed.has(n.id)), ...events.filter((n) => !n.id.startsWith('mail-') || unreadMail.has(n.id))];
   if (!visible.length) return null;
   return (
     <div className="notes" aria-live="polite">

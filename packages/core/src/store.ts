@@ -11,10 +11,12 @@ import type {
   RateLimits,
   ServerEvent,
   Settings,
+  TakeoverRequest,
   Task,
   User,
 } from '@agent-hq/protocol';
 import type { Db } from './db.ts';
+import { githubUrl } from './github.ts';
 import { DEFAULT_INTEGRATIONS } from './integrations.ts';
 
 interface EntityKinds {
@@ -26,6 +28,7 @@ interface EntityKinds {
   agent: Agent;
   task: Task;
   account: ClaudeAccount;
+  takeover: TakeoverRequest;
 }
 
 type Kind = keyof EntityKinds;
@@ -42,7 +45,7 @@ export const DEFAULT_THEME: FloorTheme = {
 
 export const PALETTE = ['#3d63dd', '#e5484d', '#30a46c', '#f76b15', '#8e4ec6', '#12a594', '#d6409f', '#ffb224'];
 
-const DEFAULT_SETTINGS: Settings = { maxAgents: 10, dispatchMode: 'auto', gamification: true, integrations: DEFAULT_INTEGRATIONS };
+const DEFAULT_SETTINGS: Settings = { maxAgents: 10, dispatchMode: 'auto', gamification: true, integrations: DEFAULT_INTEGRATIONS, takeoverPolicy: 'approval' };
 
 // Fill in fields added after a record was first saved.
 const normalize: { [K in Kind]?: (e: any) => EntityKinds[K] } = {
@@ -57,7 +60,7 @@ const normalize: { [K in Kind]?: (e: any) => EntityKinds[K] } = {
   }),
   building: (b) => ({ color: PALETTE[0], ...b }),
   floor: (f) => ({ desks: 6, ...f, theme: { ...DEFAULT_THEME, ...f.theme } }),
-  project: (p) => ({ remoteUrl: null, githubUrl: null, ...p }),
+  project: (p) => ({ remoteUrl: null, ...p, githubUrl: p.githubUrl ?? githubUrl(p.remoteUrl) }),
   agent: (a) => ({
     kind: 'staff',
     repo: null,
@@ -100,6 +103,7 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
       agent: load('agent'),
       task: load('task'),
       account: load('account'),
+      takeover: load('takeover'),
     };
     const saved = db.getKv<Partial<Settings>>('settings') ?? {};
     this.settings = { ...DEFAULT_SETTINGS, ...saved, integrations: saved.integrations ?? DEFAULT_INTEGRATIONS };
@@ -135,10 +139,10 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
     return this.put(kind, next);
   }
 
-  remove(kind: 'building' | 'floor' | 'project' | 'agent' | 'task' | 'invite' | 'user' | 'account', id: ID) {
+  remove(kind: 'building' | 'floor' | 'project' | 'agent' | 'task' | 'invite' | 'user' | 'account' | 'takeover', id: ID) {
     this.maps[kind].delete(id);
     this.db.deleteEntity(kind, id);
-    if (kind === 'building' || kind === 'floor' || kind === 'project' || kind === 'agent' || kind === 'task' || kind === 'account') {
+    if (kind === 'building' || kind === 'floor' || kind === 'project' || kind === 'agent' || kind === 'task' || kind === 'account' || kind === 'takeover') {
       this.emit('event', { type: `${kind}_removed`, id });
     }
   }

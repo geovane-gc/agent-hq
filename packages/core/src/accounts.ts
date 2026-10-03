@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { RunnerSessionEvent } from '@agent-hq/protocol';
@@ -33,10 +33,27 @@ export function resolveConfigDir(dataDir: string, configDir: string | null): str
   return path.isAbsolute(configDir) ? configDir : path.resolve(dataDir, configDir);
 }
 
-/** True for config dirs Agent HQ created (and may log into or delete). */
+const real = (p: string) => (existsSync(p) ? realpathSync(p) : path.resolve(p));
+
+/** True for config dirs Agent HQ created (and may log into, log out of or delete), also after resolving symlinks. */
 export function isManagedConfigDir(dataDir: string, dir: string): boolean {
-  const root = path.resolve(dataDir, ACCOUNTS_DIR) + path.sep;
-  return path.resolve(dir).startsWith(root);
+  const root = path.resolve(dataDir, ACCOUNTS_DIR);
+  const inside = (p: string, r: string) => p.startsWith(r + path.sep) && p.length > r.length + 1;
+  return inside(path.resolve(dir), root) && inside(real(dir), real(root));
+}
+
+/**
+ * Environment for running `claude` on a managed account: CLAUDE_CONFIG_DIR is
+ * always set to that absolute dir. Throws rather than ever falling back to
+ * the default login.
+ */
+export function accountCliEnv(dir: string): Record<string, string> {
+  if (typeof dir !== 'string' || !dir.trim() || !path.isAbsolute(dir)) {
+    throw new Error('Refusing to run claude without an explicit account config dir');
+  }
+  const env = cleanEnv({ CLAUDE_CONFIG_DIR: dir });
+  if (env.CLAUDE_CONFIG_DIR !== dir) throw new Error('Refusing to run claude: CLAUDE_CONFIG_DIR is not set to the account dir');
+  return env;
 }
 
 /** Environment for a `claude` process on that account. null keeps the inherited (default) login. */
@@ -145,15 +162,61 @@ export function startAccountLogin(dataDir: string, configDir: string, onEvent: (
   };
 }
 
+/** runner_reply of `account_remove`. */
+export interface AccountRemoval {
+  loggedOut: boolean;
+  /** Set when the login could not be removed safely: credentials may remain. */
+  warning: string | null;
+}
+
+function runClaude(args: string[], env: Record<string, string>): Promise<{ code: number; stdout: string; error: string | null }> {
+  return new Promise((resolve) => {
+    execFile(resolveClaudeBinary(), args, { env, timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
+      const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
+      resolve({ code, stdout, error: err ? (stderr.trim() || err.message) : null });
+    });
+  });
+}
+
 /**
- * Deletes a managed account's config dir (its settings, sessions and, where
- * Claude Code keeps them in files, its credentials). It deliberately doesn't
- * run `claude auth logout`, so it can never touch the default login.
+ * Removes a managed account from this machine: logs it out, so its credential
+ * (e.g. the macOS Keychain entry) doesn't stay behind, then deletes its config
+ * dir. Guards: never the default login; only dirs under <data>/claude-accounts
+ * (symlinks resolved); `claude` always runs with CLAUDE_CONFIG_DIR set to that
+ * dir; and the logout only happens when `claude auth status` in that dir
+ * reports that same dir and the account's email. Otherwise the dir is still
+ * deleted and a warning says credentials may remain.
  */
-export function removeAccountDir(dataDir: string, configDir: string) {
+export async function removeAccount(dataDir: string, configDir: string | null, email: string | null): Promise<AccountRemoval> {
+  if (!configDir) throw new Error('The default login is never logged out or removed by Agent HQ');
   const dir = resolveConfigDir(dataDir, configDir)!;
   if (!isManagedConfigDir(dataDir, dir)) throw new Error('Only Agent HQ account folders can be removed');
+  if (!existsSync(dir)) return { loggedOut: false, warning: null };
+  const target = realpathSync(dir);
+  const env = accountCliEnv(target);
+  const revoke = 'Credentials may remain on that machine; revoke the session at claude.ai (Settings → Account).';
+  let loggedOut = false;
+  let warning: string | null = null;
+
+  const status = await runClaude(['auth', 'status', '--json'], env);
+  let j: Record<string, unknown> | null = null;
+  try { j = JSON.parse(status.stdout); } catch {}
+  const statusDir = typeof j?.configDirectory === 'string' ? real(j.configDirectory) : null;
+  if (!j) {
+    warning = `Couldn't verify the login before logging out (${status.error ?? 'unreadable status'}). ${revoke}`;
+  } else if (!j.loggedIn) {
+    // Nothing to log out.
+  } else if (statusDir !== target || statusDir === real(defaultConfigDir())) {
+    warning = `Couldn't verify the login: Claude Code reported another config dir (${statusDir ?? 'none'}), so it was not logged out. ${revoke}`;
+  } else if (!email || j.email !== email) {
+    warning = `Couldn't verify the login: it is signed in as ${String(j.email ?? 'an unknown account')}, not ${email ?? 'the expected account'}, so it was not logged out. ${revoke}`;
+  } else {
+    const out = await runClaude(['auth', 'logout'], accountCliEnv(target));
+    if (out.code === 0) loggedOut = true;
+    else warning = `Logging out failed (${out.error ?? `exit ${out.code}`}). ${revoke}`;
+  }
   rmSync(dir, { recursive: true, force: true });
+  return { loggedOut, warning };
 }
 
 /**
