@@ -17,6 +17,8 @@ import { EmptyBalconyModal, SummonModal } from './components/SummonModal.tsx';
 import { UsageModal } from './components/Usage.tsx';
 import { WhiteboardLayer } from './components/Whiteboards.tsx';
 import { openWhiteboards } from './whiteboards.ts';
+import { desktopOutdated, RESTART_TEXT } from './desktop.ts';
+import { notify } from './notify.ts';
 import { ScreenOverlay, VoiceDock } from './components/Voice.tsx';
 import { floorLabel } from './format.ts';
 import { CampusScene } from './office3d/CampusScene.tsx';
@@ -77,6 +79,14 @@ export function App() {
       setFloorId(ground?.id ?? world.floors[0]?.id ?? null);
     }
   }, [world, floorId]);
+  // The desktop app is older than this page (updated while running): say so up front.
+  const inOffice = !!world;
+  useEffect(() => {
+    if (!inOffice) return;
+    desktopOutdated().then((outdated) => {
+      if (outdated) notify({ tone: 'waiting', icon: '🔄', title: 'Restart Agent HQ to finish updating', text: `${RESTART_TEXT} Until then, screen sharing won’t work.`, id: 'desktop-outdated', ttl: 60000 });
+    });
+  }, [inOffice]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Esc inside an agent's terminal belongs to Claude Code.
