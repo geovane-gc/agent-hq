@@ -4,6 +4,7 @@
 
 **A 3D virtual office where AI agents are your employees.**
 
+[![CI](https://github.com/geovane-gc/agent-hq/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/geovane-gc/agent-hq/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js >= 22.18](https://img.shields.io/badge/node-%E2%89%A5%2022.18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![Platform: Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#requirements)
@@ -187,7 +188,7 @@ free in Settings.
 | `--data-dir` / `AGENT_HQ_DATA_DIR` | `~/.agent-hq` | Database, worktrees, agent notes, owner token |
 | `--port` / `AGENT_HQ_PORT` | `4317` | |
 | `--host` / `AGENT_HQ_HOST` | `127.0.0.1` | Agents run commands on your machine: expose with care |
-| `AGENT_HQ_CLAUDE_PATH` | auto-detected | Path to the `claude` binary |
+| `AGENT_HQ_CLAUDE_PATH` | auto-detected | Path to the `claude` binary (a `.js`/`.mjs` path runs with Node, e.g. the test fake in `scripts/fake-claude.mjs`) |
 
 Voice and screen sharing go peer to peer (WebRTC). **Settings → General → Voice & screen sharing** (boss only) holds
 the proximity radius, the STUN servers (default: a public Google STUN server) and an optional **TURN** relay (URL,

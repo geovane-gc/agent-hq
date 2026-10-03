@@ -46,6 +46,15 @@ export function resolveClaudeBinary(): string {
   throw new Error('Claude Code not found. Install it (https://claude.com/claude-code) or set AGENT_HQ_CLAUDE_PATH.');
 }
 
+/**
+ * The command line that runs `claude <args>`. A JavaScript AGENT_HQ_CLAUDE_PATH
+ * (e.g. scripts/fake-claude.mjs, for tests) runs with this Node, so it works
+ * on Windows too, where scripts can't be executed directly.
+ */
+export function claudeCommand(binary: string, args: string[]): [string, string[]] {
+  return /\.[cm]?js$/i.test(binary) ? [process.execPath, [binary, ...args]] : [binary, args];
+}
+
 const MAX_TOOL_RESULT = 4000;
 
 function truncate(s: string, n: number) {
@@ -117,7 +126,7 @@ class ClaudeCodeSession implements AgentSession {
     for (const dir of opts.addDirs) args.push('--add-dir', dir);
     if (Object.keys(opts.mcpServers).length) args.push('--mcp-config', JSON.stringify({ mcpServers: opts.mcpServers }));
 
-    this.child = spawn(binary, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: cleanEnv(opts.configDir ? { CLAUDE_CONFIG_DIR: opts.configDir } : {}) });
+    this.child = spawn(...claudeCommand(binary, args), { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: cleanEnv(opts.configDir ? { CLAUDE_CONFIG_DIR: opts.configDir } : {}) });
 
     let stderr = '';
     this.child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
@@ -301,7 +310,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         resolve({ ok: false, version: null, error: (err as Error).message });
         return;
       }
-      execFile(bin, ['--version'], { timeout: 15000, windowsHide: true }, (err, stdout) => {
+      execFile(...claudeCommand(bin, ['--version']), { timeout: 15000, windowsHide: true }, (err, stdout) => {
         if (err) resolve({ ok: false, version: null, error: err.message });
         else resolve({ ok: true, version: stdout.trim(), error: null });
       });

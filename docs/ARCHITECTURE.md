@@ -44,7 +44,7 @@ The customization catalog (every decoration, desk option, room style and theme, 
 | `runner/remote.ts` | Host-side proxy that sends runner ops (start, input, resize, close…) to a teammate's machine |
 | `runner/join.ts` | `agent-hq join`: the teammate's side. Clones or maps repos and runs a LocalRunner |
 | `adapters/claude-code-tui.ts` | The default: Claude Code's interactive UI in a PTY, status from hooks and the statusline |
-| `adapters/claude-code.ts` | Binary discovery and the headless `claude -p` stream-json fallback |
+| `adapters/claude-code.ts` | Binary discovery (a `.js`/`.mjs` `AGENT_HQ_CLAUDE_PATH`, like the test fake `scripts/fake-claude.mjs`, runs with Node) and the headless `claude -p` stream-json fallback |
 | `adapters/env.ts` | Strips inherited Claude Code session variables from spawned processes |
 | `hooks/hq-hook.ts` | Hook/statusline command that forwards events to the runner |
 | `mcp/hq-mcp.ts` | Stdio MCP server giving agents `list_team`, `list_projects` and `list_tasks`; coordinators also get `create_task` and `assign_task` |

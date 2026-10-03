@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, write
 import os from 'node:os';
 import path from 'node:path';
 import type { RunnerSessionEvent } from '@agent-hq/protocol';
-import { resolveClaudeBinary } from './adapters/claude-code.ts';
+import { claudeCommand, resolveClaudeBinary } from './adapters/claude-code.ts';
 import { loadNodePty } from './adapters/claude-code-tui.ts';
 import { cleanEnv } from './adapters/env.ts';
 import type { RunnerSession } from './runner/runner.ts';
@@ -84,7 +84,7 @@ export function accountStatus(dataDir: string, configDir: string | null): Promis
   try { bin = resolveClaudeBinary(); } catch (err) { return Promise.resolve(unknown((err as Error).message)); }
   return new Promise((resolve) => {
     // Exits 1 when logged out, still printing the JSON.
-    execFile(bin, ['auth', 'status', '--json'], { env: accountEnv(dir), timeout: 20000, windowsHide: true }, (err, stdout) => {
+    execFile(...claudeCommand(bin, ['auth', 'status', '--json']), { env: accountEnv(dir), timeout: 20000, windowsHide: true }, (err, stdout) => {
       try {
         const j = JSON.parse(stdout);
         const loggedIn = !!j.loggedIn;
@@ -116,7 +116,7 @@ export function startAccountLogin(dataDir: string, configDir: string, onEvent: (
 
   const nodePty = loadNodePty();
   if (nodePty) {
-    const p = nodePty.spawn(bin, ['auth', 'login'], { name: 'xterm-256color', cols: 100, rows: 30, cwd: dir, env });
+    const p = nodePty.spawn(...claudeCommand(bin, ['auth', 'login']), { name: 'xterm-256color', cols: 100, rows: 30, cwd: dir, env });
     p.onData((data) => onEvent({ type: 'pty', data }));
     p.onExit(({ exitCode }) => onExit(exitCode, exitCode ? `claude auth login exited with code ${exitCode}` : null));
     return {
@@ -136,7 +136,7 @@ export function startAccountLogin(dataDir: string, configDir: string, onEvent: (
   }
 
   // No PTY: a piped process. Enough to show the login URL and paste the code back.
-  const child = spawn(bin, ['auth', 'login'], { cwd: dir, env, windowsHide: true });
+  const child = spawn(...claudeCommand(bin, ['auth', 'login']), { cwd: dir, env, windowsHide: true });
   const out = (d: Buffer) => onEvent({ type: 'pty', data: d.toString('utf8').replace(/\r?\n/g, '\r\n') });
   child.stdout.on('data', out);
   child.stderr.on('data', out);
@@ -171,7 +171,7 @@ export interface AccountRemoval {
 
 function runClaude(args: string[], env: Record<string, string>): Promise<{ code: number; stdout: string; error: string | null }> {
   return new Promise((resolve) => {
-    execFile(resolveClaudeBinary(), args, { env, timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
+    execFile(...claudeCommand(resolveClaudeBinary(), args), { env, timeout: 30000, windowsHide: true }, (err, stdout, stderr) => {
       const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
       resolve({ code, stdout, error: err ? (stderr.trim() || err.message) : null });
     });

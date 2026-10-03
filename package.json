@@ -21,7 +21,8 @@
     "build": "npm run build -w @agent-hq/web",
     "join": "node packages/core/src/index.ts join",
     "typecheck": "tsc -p packages/core && tsc -p apps/web",
-    "models": "blender --background --factory-startup --python assets/blender/build_assets.py -- --out apps/web/public/models"
+    "models": "blender --background --factory-startup --python assets/blender/build_assets.py -- --out apps/web/public/models",
+    "smoke": "node scripts/smoke.mjs"
   },
   "overrides": {
     "rollup": "npm:@rollup/wasm-node@^4.50.0",
