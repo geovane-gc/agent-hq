@@ -16,6 +16,9 @@
 .wb-canvas { position: relative; flex: 1; min-height: 0; }
 .wb-canvas > .excalidraw { position: absolute; inset: 0; }
 .wb-loading { display: grid; place-items: center; height: 100%; color: var(--muted); }
+.wb-error { display: flex; flex-direction: column; gap: 8px; max-width: 460px; padding: 0 16px; color: var(--text); }
+.wb-error p { margin: 0; }
+.wb-error .muted { overflow-wrap: anywhere; }
 
 .wb-viewers { display: inline-flex; }
 .wb-avatar {

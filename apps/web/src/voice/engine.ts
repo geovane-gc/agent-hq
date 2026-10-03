@@ -16,7 +16,8 @@
 import { useSyncExternalStore } from 'react';
 import type { ID, IceCandidate, IceServer, RtcSignal, ScreenShare, Snapshot, VoiceMode, VoiceState } from '@agent-hq/protocol';
 import { client } from '../api.ts';
-import { notify } from '../notify.ts';
+import { desktopInfo, inDesktopApp, RESTART_TEXT } from '../desktop.ts';
+import { notify, type HudNotice } from '../notify.ts';
 import { avatarSpots, hearing, meetingOf, type Spot } from './spatial.ts';
 
 export type MicMode = 'off' | 'open' | 'ptt';
@@ -347,6 +348,7 @@ export class VoiceEngine {
     if (!floorId) throw new Error('Go into a meeting room (or join a meeting) to share your screen');
     if (!this.joined) throw new Error('Voice is not connected yet');
     requireCapture();
+    if (!navigator.mediaDevices.getDisplayMedia) throw new DOMException('No screen capture in this browser', 'NotSupportedError');
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false });
     const track = stream.getVideoTracks()[0];
     if (track) track.contentHint = 'detail';
@@ -841,8 +843,40 @@ export function openScreen() {
 
 /** Starts sharing and reports failures as a toast (a cancelled picker is not a failure). */
 export function shareScreen() {
-  voice.startShare().catch((err: Error) => {
-    if (err.name === 'NotAllowedError' || err.name === 'AbortError') return;
-    notify({ tone: 'error', icon: '🖥️', title: 'Couldn’t share your screen', text: err.message, id: 'screen-share-error' });
+  voice.startShare().catch(async (err: Error) => {
+    const notice = await shareFailure(err);
+    if (notice) notify(notice);
   });
+}
+
+/** Why sharing failed, in words the player can act on; null when they just cancelled the picker. */
+async function shareFailure(err: Error): Promise<HudNotice | null> {
+  const failed = { tone: 'error', icon: '🖥️', title: 'Couldn’t share your screen', id: 'screen-share-error', ttl: 20000 } as const;
+  const allow = (where: string, then: string): HudNotice => ({
+    ...failed,
+    title: 'Allow screen recording to share your screen',
+    text: `In System Settings → Privacy & Security → Screen & System Audio Recording, turn on ${where}, then ${then}.`,
+    ttl: 60000,
+  });
+  if (inDesktopApp) {
+    const app = await desktopInfo();
+    if (!app) return { ...failed, title: 'Restart Agent HQ to share your screen', text: RESTART_TEXT, ttl: 60000 };
+    // The desktop app refuses capture without the permission, which looks like a cancelled picker.
+    const access = await window.agentHQ?.screenAccess?.().catch(() => null);
+    if (access && access !== 'granted') {
+      return { ...allow(app.appName, 'quit and reopen Agent HQ'), action: { label: 'Open System Settings', run: () => void window.agentHQ?.openScreenSettings?.() } };
+    }
+  }
+  // Browsers say "Permission denied by system" when the OS (not the player) refused.
+  if (err.name === 'NotAllowedError' && /system/i.test(err.message)) return allow('your browser', 'restart the browser');
+  if (err.name === 'AbortError' && /timeout/i.test(err.message)) return { ...failed, text: 'The screen picker timed out. Click Share screen again and choose a screen or window.' };
+  if (err.name === 'NotAllowedError' || err.name === 'AbortError') return null;
+  if (err.name === 'NotSupportedError') return { ...failed, text: 'This browser can’t share its screen. Use Chrome, Edge or Firefox on a computer, or the Agent HQ desktop app.' };
+  if (err.name === 'NotReadableError') {
+    // The macOS system picker also ends this way when it's closed without a choice.
+    return inDesktopApp
+      ? { ...failed, title: 'No screen shared', text: 'The picker was closed, or the screen couldn’t be captured. Click Share screen to try again.' }
+      : { ...failed, text: 'The screen couldn’t be captured. Make sure screen recording is allowed for this browser in your system settings, then try again.' };
+  }
+  return { ...failed, text: err.message };
 }

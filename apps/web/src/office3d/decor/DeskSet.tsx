@@ -3,7 +3,8 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { DeskItem, DeskModel, DeskStyle } from '@agent-hq/protocol';
 import { BASIC_DESK } from '@agent-hq/protocol/catalog';
-import { Model, type ModelName } from '../models.tsx';
+import { markDecal, Model, type ModelName } from '../models.tsx';
+import { DECAL } from '../textures.ts';
 import { NO_RAYCAST } from './Decorations.tsx';
 
 // A workstation's furniture in its desk style: desk finish, chair, one to
@@ -39,6 +40,7 @@ function Desk({ model, items, accent }: { model: DeskModel; items: DeskItem[]; a
       if (!mesh.isMesh) return;
       mesh.castShadow = mesh.receiveShadow = true;
       const material = mesh.material as THREE.MeshStandardMaterial;
+      markDecal(material);
       if (hidden.has(material.name)) mesh.visible = false;
       else if (recolor[material.name]) {
         const m = material.clone();
@@ -102,7 +104,7 @@ function Trinket({ id, accent }: { id: DeskItem; accent: string }) {
     case 'photo': return (
       <group position={[-0.62, TOP, -0.17]} rotation={[-0.25, 0.45, 0]}>
         <mesh position={[0, 0.07, 0]} castShadow raycast={NO_RAYCAST}><boxGeometry args={[0.13, 0.11, 0.012]} /><meshStandardMaterial color="#2b2f36" /></mesh>
-        <mesh position={[0, 0.07, 0.007]} raycast={NO_RAYCAST}><planeGeometry args={[0.11, 0.09]} /><meshStandardMaterial color="#8fc1e8" /></mesh>
+        <mesh position={[0, 0.07, 0.007]} raycast={NO_RAYCAST}><planeGeometry args={[0.11, 0.09]} /><meshStandardMaterial color="#8fc1e8" {...DECAL} /></mesh>
       </group>
     );
     case 'books': return (

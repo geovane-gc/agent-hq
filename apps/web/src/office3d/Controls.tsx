@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { controlsPrefs, useControlsPrefs } from '../controlsPrefs.ts';
 import { findInteractable } from './interact.ts';
 import type { Rect, Vec3 } from './layout.ts';
 
@@ -13,9 +14,12 @@ const WALK_SPEED = 3.2;
 const RUN_SPEED = 6;
 const ACCEL = 12;
 const RADIUS = 0.28;
+/** Radians per pixel at 1× sensitivity (Settings → Controls scales it). */
 const MOUSE_SENSITIVITY = 0.0022;
-/** Pointer-lock deltas above this are browser glitches (a known Windows issue), not real motion. */
+/** Pointer-lock deltas above this are browser glitches (a known Windows issue), not real motion. Checked before scaling. */
 const MAX_MOUSE_DELTA = 220;
+/** OrbitControls rotate speed at 1×. */
+const ORBIT_ROTATE_SPEED = 0.6;
 
 /** Keys typed into inputs or terminals must never move the camera. */
 function isTyping(e: KeyboardEvent): boolean {
@@ -49,6 +53,7 @@ export function IsoControls(props: { center: Vec3; span: number; restoreTarget: 
   const { camera } = useThree();
   const controls = useRef<OrbitControlsImpl>(null);
   const keys = usePressedKeys();
+  const prefs = useControlsPrefs();
   const target = useMemo(() => props.restoreTarget?.clone() ?? new THREE.Vector3(...props.center), [props.restoreTarget, props.center]);
 
   useEffect(() => {
@@ -73,7 +78,7 @@ export function IsoControls(props: { center: Vec3; span: number; restoreTarget: 
     if (k.has('KeyD') || k.has('ArrowRight')) move.add(right);
     if (k.has('KeyA') || k.has('ArrowLeft')) move.sub(right);
     if (move.lengthSq() === 0) return;
-    move.normalize().multiplyScalar(props.span * 0.6 * Math.min(dt, 0.05));
+    move.normalize().multiplyScalar(props.span * 0.6 * prefs.orbitPan * Math.min(dt, 0.05));
     camera.position.add(move);
     c.target.add(move);
   });
@@ -88,7 +93,9 @@ export function IsoControls(props: { center: Vec3; span: number; restoreTarget: 
       maxDistance={props.span * 2}
       enableDamping
       dampingFactor={0.12}
-      rotateSpeed={0.6}
+      rotateSpeed={ORBIT_ROTATE_SPEED * prefs.orbitRotate}
+      panSpeed={prefs.orbitPan}
+      zoomSpeed={prefs.orbitZoom}
     />
   );
 }
@@ -189,8 +196,10 @@ export function FirstPersonControls(props: {
     const onMouseMove = (e: MouseEvent) => {
       if (!locked.current) return;
       if (Math.abs(e.movementX) > MAX_MOUSE_DELTA || Math.abs(e.movementY) > MAX_MOUSE_DELTA) return;
-      yaw.current -= e.movementX * MOUSE_SENSITIVITY;
-      pitch.current = THREE.MathUtils.clamp(pitch.current - e.movementY * MOUSE_SENSITIVITY, -1.45, 1.45);
+      const { lookSensitivity, invertY } = controlsPrefs.get();
+      const k = MOUSE_SENSITIVITY * lookSensitivity;
+      yaw.current -= e.movementX * k;
+      pitch.current = THREE.MathUtils.clamp(pitch.current - e.movementY * k * (invertY ? -1 : 1), -1.45, 1.45);
     };
     const onMouseDown = (e: MouseEvent) => {
       if (!locked.current || e.button !== 0) return;
@@ -241,7 +250,7 @@ export function FirstPersonControls(props: {
       if (k.has('KeyD') || k.has('ArrowRight')) wish.add(right);
       if (k.has('KeyA') || k.has('ArrowLeft')) wish.sub(right);
     }
-    if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(k.has('ShiftLeft') || k.has('ShiftRight') ? RUN_SPEED : WALK_SPEED);
+    if (wish.lengthSq() > 0) wish.normalize().multiplyScalar((k.has('ShiftLeft') || k.has('ShiftRight') ? RUN_SPEED : WALK_SPEED) * controlsPrefs.get().walkSpeed);
     // ease towards the wished velocity: no instant starts or stops
     velocity.current.lerp(wish, 1 - Math.exp(-ACCEL * dt));
     if (velocity.current.lengthSq() < 1e-5) velocity.current.set(0, 0, 0);

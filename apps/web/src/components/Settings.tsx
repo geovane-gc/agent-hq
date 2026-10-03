@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react';
 import type { Integration, Invite, Snapshot } from '@agent-hq/protocol';
 import { client, run } from '../api.ts';
 import { AccountsPanel } from './Accounts.tsx';
+import { ControlsSettings } from './ControlsSettings.tsx';
 import { ago, initials, stamp } from '../format.ts';
 import { COLORS, LookPicker } from './forms.tsx';
 import { Modal } from './Modal.tsx';
 
-type Tab = 'general' | 'integrations' | 'team' | 'accounts';
+type Tab = 'general' | 'controls' | 'integrations' | 'team' | 'accounts';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'general', label: '⚙️ General' },
+  { id: 'controls', label: '🎮 Controls' },
   { id: 'integrations', label: '🔌 Integrations' },
   { id: 'team', label: '👥 Team' },
   { id: 'accounts', label: '🔑 Claude accounts' },
@@ -307,6 +309,7 @@ export function SettingsModal({ world, onClose, initial = 'general' }: { world: 
         ))}
       </div>
       {tab === 'general' && <General world={world} />}
+      {tab === 'controls' && <ControlsSettings />}
       {tab === 'integrations' && <Integrations world={world} />}
       {tab === 'team' && <Team world={world} />}
       {tab === 'accounts' && <AccountsPanel world={world} />}

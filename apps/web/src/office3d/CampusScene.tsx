@@ -110,7 +110,8 @@ export function CampusScene(props: { world: Snapshot; onEnterFloor: (id: ID) => 
   return (
     <div className="scene">
       <HtmlLayer.Provider value={htmlLayer}>
-      <Canvas shadows dpr={[1, 2]} camera={{ position: [size * 0.7, size * 0.6, size * 0.9], fov: 40 }}>
+      {/* The camera stays 6 m out: a far-off near plane keeps the depth precision that stops windows z-fighting with the facades. */}
+      <Canvas shadows dpr={[1, 2]} camera={{ position: [size * 0.7, size * 0.6, size * 0.9], fov: 40, near: 0.5 }}>
         <color attach="background" args={['#bcd7ef']} />
         <fog attach="fog" args={['#bcd7ef', size * 1.5, size * 3]} />
         <hemisphereLight args={['#ffffff', '#6b8f5a', 1]} />

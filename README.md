@@ -4,6 +4,7 @@
 
 **A 3D virtual office where AI agents are your employees.**
 
+[![CI](https://github.com/geovane-gc/agent-hq/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/geovane-gc/agent-hq/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js >= 22.18](https://img.shields.io/badge/node-%E2%89%A5%2022.18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![Platform: Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#requirements)
@@ -120,7 +121,8 @@ npm run dev
 ```
 
 `npm run dev` opens the Agent HQ desktop app with hot reload. Electron is downloaded automatically on the first run, and
-closing the window stops everything.
+closing the window stops everything. After you pull changes, `npm run dev` and `npm start` run `npm install` themselves
+when dependencies changed, and the window restarts when `apps/desktop` changes.
 
 | Command | What it does |
 |---|---|
@@ -187,13 +189,17 @@ free in Settings.
 | `--data-dir` / `AGENT_HQ_DATA_DIR` | `~/.agent-hq` | Database, worktrees, agent notes, owner token |
 | `--port` / `AGENT_HQ_PORT` | `4317` | |
 | `--host` / `AGENT_HQ_HOST` | `127.0.0.1` | Agents run commands on your machine: expose with care |
-| `AGENT_HQ_CLAUDE_PATH` | auto-detected | Path to the `claude` binary |
+| `AGENT_HQ_CLAUDE_PATH` | auto-detected | Path to the `claude` binary (a `.js`/`.mjs` path runs with Node, e.g. the test fake in `scripts/fake-claude.mjs`) |
 
 Voice and screen sharing go peer to peer (WebRTC). **Settings → General → Voice & screen sharing** (boss only) holds
 the proximity radius, the STUN servers (default: a public Google STUN server) and an optional **TURN** relay (URL,
 username, credential). Players behind strict NATs or corporate firewalls can't connect without TURN (for example
 [coturn](https://github.com/coturn/coturn)). The TURN credential stays on the host and is only handed to players when
 they join voice. Every player connects to every other one, which works well up to about 8 people in voice.
+
+On macOS, screen sharing needs the Screen Recording permission: **System Settings → Privacy & Security → Screen & System
+Audio Recording**, turn on Agent HQ (listed as **Electron** when run with `npm run dev`, or your browser), then restart
+it. The app offers to open that pane when the permission is missing.
 
 Integrations (MCP servers) are edited in **Settings → Integrations**. Each entry is a Claude Code `mcpServers` config
 plus the setup it needs (for example the Blender add-on or the Unity package).

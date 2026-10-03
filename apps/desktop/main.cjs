@@ -8,6 +8,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const root = path.resolve(__dirname, '../..');
+/**
+ * What the running desktop app can do, for the page (see preload.cjs and
+ * apps/web/src/desktop.ts). Bump it when the bridge or the media handling
+ * changes: a page newer than the app then asks for a restart instead of
+ * failing in odd ways (main.cjs only reloads when the app restarts).
+ */
+const DESKTOP_API = 2;
 const port = process.env.AGENT_HQ_PORT || '4317';
 let server = null;
 /** The office page's origin: only it may open dialogs through the preload. */
@@ -77,9 +84,18 @@ async function createWindow() {
   win.loadURL(url);
 }
 
+/** Only the office page may use the bridge (see preload.cjs). */
+function fromOfficePage(event) {
+  try {
+    return !!officeOrigin && !!event.senderFrame && new URL(event.senderFrame.url).origin === officeOrigin;
+  } catch {
+    return false;
+  }
+}
+
 /** The system folder chooser, for the page's "Browse…" buttons (see preload.cjs). */
 async function pickFolder(event, defaultPath) {
-  if (!officeOrigin || !event.senderFrame || new URL(event.senderFrame.url).origin !== officeOrigin) return null;
+  if (!fromOfficePage(event)) return null;
   const options = { title: 'Choose a folder', properties: ['openDirectory', 'createDirectory'] };
   if (typeof defaultPath === 'string' && defaultPath.trim()) {
     const wanted = path.resolve(defaultPath.trim().replace(/^~(?=$|[\\/])/, app.getPath('home')));
@@ -108,8 +124,12 @@ function setupMedia(win, officeUrl) {
   ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
     if (permission === 'speaker-selection') return callback(fromOffice(details.requestingUrl));
     if (permission !== 'media') return callback(true); // Electron's default
+    if (!fromOffice(details.requestingUrl)) return callback(false);
     const types = details.mediaTypes ?? [];
-    if (!fromOffice(details.requestingUrl) || types.length === 0 || types.some((t) => t !== 'audio')) return callback(false);
+    // getDisplayMedia asks for 'media' with no device types. Let it through:
+    // the display media handler below decides what, if anything, is captured.
+    if (types.length === 0) return callback(true);
+    if (types.some((t) => t !== 'audio')) return callback(false);
     if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('microphone') !== 'granted') {
       systemPreferences.askForMediaAccess('microphone').then(callback, () => callback(false));
       return;
@@ -118,14 +138,21 @@ function setupMedia(win, officeUrl) {
   });
 
   ses.setDisplayMediaRequestHandler((request, callback) => {
-    if (!fromOffice(request.securityOrigin || request.frame?.url || '')) return callback({});
+    // Answering without a stream refuses (the page gets an AbortError);
+    // callback({}) would throw, as video was requested.
+    const refuse = () => callback();
+    if (!fromOffice(request.securityOrigin || request.frame?.url || '')) return refuse();
+    // Without Screen Recording permission macOS only shows us the wallpaper.
+    // Refuse; the page then explains how to grant it (see screenAccess).
+    if (screenAccess() !== 'granted') return refuse();
     desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 160, height: 90 } }).then((sources) => {
-      if (sources.length === 0) return callback({});
+      if (sources.length === 0) return refuse();
       let answered = false;
       const answer = (source) => {
         if (answered) return;
         answered = true;
-        callback(source ? { video: source } : {});
+        if (source) callback({ video: source });
+        else refuse();
       };
       const item = (source) => ({
         label: source.name.length > 60 ? `${source.name.slice(0, 59)}…` : source.name,
@@ -144,8 +171,36 @@ function setupMedia(win, officeUrl) {
       ]);
       // Closing the menu without a choice cancels. The close callback can fire just before the click, hence the delay.
       menu.popup({ window: win, callback: () => setTimeout(() => answer(null), 100) });
-    }, () => callback({}));
+    }, refuse);
   }, { useSystemPicker: true });
+}
+
+/**
+ * May we capture the screen? On macOS that's the Screen Recording permission
+ * (System Settings → Privacy & Security → Screen & System Audio Recording);
+ * elsewhere always 'granted'.
+ */
+function screenAccess() {
+  if (process.platform !== 'darwin') return 'granted';
+  const { desktopCapturer, systemPreferences } = require('electron');
+  const status = systemPreferences.getMediaAccessStatus('screen');
+  // Asking for sources makes macOS list the app in that settings pane (and
+  // prompt, the first time), so there is a switch to turn on.
+  if (status !== 'granted') desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => {});
+  return status;
+}
+
+/** The page's side of preload.cjs: the folder chooser, what this app can do, and screen capture permission. */
+function setupBridge() {
+  ipcMain.handle('agent-hq:pick-folder', pickFolder);
+  ipcMain.handle('agent-hq:info', (event) => (fromOfficePage(event)
+    ? { api: DESKTOP_API, platform: process.platform, appName: app.isPackaged ? app.getName() : 'Electron' }
+    : null));
+  ipcMain.handle('agent-hq:screen-access', (event) => (fromOfficePage(event) ? screenAccess() : null));
+  ipcMain.handle('agent-hq:open-screen-settings', async (event) => {
+    if (!fromOfficePage(event) || process.platform !== 'darwin') return false;
+    return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').then(() => true, () => false);
+  });
 }
 
 // One office per machine: focus the existing window instead of opening a second one.
@@ -157,7 +212,7 @@ if (!app.requestSingleInstanceLock()) {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
   app.whenReady().then(() => {
-    ipcMain.handle('agent-hq:pick-folder', pickFolder);
+    setupBridge();
     createWindow();
   });
 }
