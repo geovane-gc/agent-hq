@@ -41,7 +41,7 @@ function ApprovalCard({ approval, canResolve }: { approval: Approval; canResolve
           <button className="ghost danger" onClick={() => resolve('deny')}>✕ Deny</button>
         </div>
       ) : (
-        <p className="hint">Only this agent's owner can approve.</p>
+        <p className="hint">Only the player whose Claude account runs this agent can approve.</p>
       )}
     </div>
   );
@@ -214,7 +214,10 @@ export function AgentPanel(props: { world: Snapshot; agentId: ID; onClose: () =>
           </div>
         </form>
       ) : (
-        <p className="composer hint">You're watching {owner?.name}'s agent. Assign it work through the board.</p>
+        <p className="composer hint">
+          You're watching {owner?.name}'s agent: it runs on their Claude account, so only they can message it. Assign it work
+          through the board, or take it over from its computer to continue on your own account.
+        </p>
       )}
 
       {editing && <AgentModal world={props.world} floorId={agent.floorId} agent={agent} onClose={() => setEditing(false)} />}

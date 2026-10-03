@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import type { Integration, Invite, Snapshot } from '@agent-hq/protocol';
 import { client, run } from '../api.ts';
+import { AccountsPanel } from './Accounts.tsx';
 import { ago, initials, stamp } from '../format.ts';
 import { COLORS, LookPicker } from './forms.tsx';
 import { Modal } from './Modal.tsx';
 
-type Tab = 'general' | 'integrations' | 'team';
+type Tab = 'general' | 'integrations' | 'team' | 'accounts';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'general', label: '⚙️ General' },
   { id: 'integrations', label: '🔌 Integrations' },
   { id: 'team', label: '👥 Team' },
+  { id: 'accounts', label: '🔑 Claude accounts' },
 ];
 
 function General({ world }: { world: Snapshot }) {
@@ -187,9 +189,10 @@ function Team({ world }: { world: Snapshot }) {
         })}
       </ul>
 
-      {world.you.role === 'member' && (
+      {world.you.role === 'manager' && (
         <div className="callout">
-          <strong>Run your agents.</strong> Your agents work on <em>your</em> machine with <em>your</em> Claude Code login.
+          <strong>Run your agents.</strong> Your agents work on <em>your</em> machine with <em>your</em> Claude Code logins
+          (connect more in the Claude accounts tab).
           With Agent HQ cloned and installed, run:
           <pre>node packages/core/src/index.ts join {hostUrl} --token {client.token}</pre>
           Add <code>--repo "Project name=C:\path\to\clone"</code> to use an existing checkout; otherwise projects with a git remote are cloned automatically.
@@ -207,7 +210,7 @@ function Team({ world }: { world: Snapshot }) {
             <button onClick={() => {
               const name = window.prompt('Teammate name');
               if (name) client.request('create_invite', { name }).then(reload).catch(() => {});
-            }}>＋ Invite teammate</button>
+            }}>＋ Invite a manager</button>
           </div>
           {invites.length === 0 ? <p className="empty">No invites yet. Each invite is a private link for one teammate.</p> : (
             <ul className="people invites">
@@ -242,6 +245,7 @@ export function SettingsModal({ world, onClose, initial = 'general' }: { world: 
       {tab === 'general' && <General world={world} />}
       {tab === 'integrations' && <Integrations world={world} />}
       {tab === 'team' && <Team world={world} />}
+      {tab === 'accounts' && <AccountsPanel world={world} />}
     </Modal>
   );
 }

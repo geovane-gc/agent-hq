@@ -139,8 +139,12 @@ Overview: drag to rotate, right-drag or `W A S D` to pan, wheel to zoom.
    Projects with a git `origin` are cloned automatically when `--repo` is omitted. Remote agents push their branches
    to `origin` so the team can review them.
 
-Each agent runs on its owner's machine and subscription, and only its owner can type into its terminal or approve its
-actions. Everyone else can watch.
+The building owner is the **boss**; everyone invited is a **manager**. Each agent runs on its owner's machine, on one of
+their Claude accounts (connect several in **Settings → Claude accounts**; each employee's monitor shows the account's
+email, plan and player, and lets its owner switch). Claude accounts are personal: only the player whose account runs an
+agent can type into its terminal or approve its actions. Everyone else can watch, or use **⇄ Take over** on the monitor
+to move the task, its branch (committed and pushed to `origin`) and a summary of the work so far onto their own machine
+and account.
 
 ## Configuration
 
