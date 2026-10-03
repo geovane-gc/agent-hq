@@ -274,7 +274,8 @@ export function OfficeScene(props: {
           {!locked && (
             <button className="fp-enter" onClick={() => lockRef.current?.()}>
               Click to walk around<br />
-              <small>WASD to move · Shift to run · mouse to look · click to use · Esc to release</small>
+              <small>WASD to move · Shift to run · mouse to look · click to use · Esc to release</small><br />
+              <small className="fp-hint">Mouse sensitivity: Settings → Controls</small>
             </button>
           )}
         </>
