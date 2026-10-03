@@ -80,7 +80,7 @@ export async function join(argv: string[]) {
           send({ type: 'runner_event', sessionKey: key, event });
         });
         sessions.set(key, session);
-        console.log(`▶ ${op.start.agent.name}: ${op.start.task?.title ?? 'conversation'}`);
+        console.log(`▶ ${op.start.agent.name}${op.start.repoAgentName ? ' (repo agent)' : ''}: ${op.start.task?.title ?? 'conversation'}`);
         return;
       }
       case 'send': return sessions.get(op.sessionKey)?.send(op.text);
@@ -98,6 +98,14 @@ export async function join(argv: string[]) {
       case 'cleanup': {
         const ok = await runner!.cleanup(op.project, op.task);
         send({ type: 'runner_event', sessionKey: op.requestKey, event: { type: 'exit', code: 0, error: ok ? null : 'not removed' } });
+        return;
+      }
+      case 'scan_agents': {
+        try {
+          send({ type: 'runner_reply', requestKey: op.requestKey, ok: true, result: await runner!.scanAgents(op.project), error: null });
+        } catch (err) {
+          send({ type: 'runner_reply', requestKey: op.requestKey, ok: false, result: null, error: (err as Error).message });
+        }
         return;
       }
     }

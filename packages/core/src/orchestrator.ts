@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type {
   Agent,
@@ -10,7 +10,9 @@ import type {
   Commands,
   HostToRunner,
   ID,
+  Mail,
   Presence,
+  Project,
   RunnerSessionEvent,
   Snapshot,
   Task,
@@ -20,6 +22,8 @@ import type {
 import type { Config } from './config.ts';
 import type { Db } from './db.ts';
 import { hasCommits, initRepo, originUrl } from './git.ts';
+import { createGithubRepo, githubStatus, isRepoRoot, requireGithubOrigin } from './github.ts';
+import { Mailbox } from './mailbox.ts';
 import { taskPrompt } from './memory.ts';
 import { RemoteRunner } from './runner/remote.ts';
 import type { Runner, RunnerSession } from './runner/runner.ts';
@@ -44,6 +48,8 @@ interface LiveSession {
   interactive: boolean | null;
   /** Recent terminal output, replayed to whoever opens the agent's computer. */
   buffer: string;
+  /** The agent's last message this turn: a repo agent's report. */
+  lastText: string | null;
 }
 
 /** How much terminal output to keep per agent for late viewers. */
@@ -55,6 +61,8 @@ interface PendingApproval {
 }
 
 const XP_PER_TURN = 10;
+/** How long a repo agent takes to walk between the balcony and a hot desk (the client animates it). */
+const WALK_MS = 2500;
 const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0662f'];
 const HAIRS = ['#2c1b10', '#3b2a1a', '#6a4e2e', '#b8860b', '#1c1c1c', '#a33b20', '#d8d8d8'];
 const HAIR_STYLES: Appearance['hairStyle'][] = ['short', 'long', 'bun', 'bald'];
@@ -63,6 +71,7 @@ const OWNER_ONLY = new Set<CommandName>([
   'create_building', 'update_building', 'remove_building', 'create_floor', 'update_floor', 'remove_floor',
   'create_project', 'remove_project', 'update_settings', 'create_invite', 'list_invites', 'revoke_invite',
   'remove_member', 'terminal_open', 'terminal_input', 'terminal_resize',
+  'link_project_github', 'set_github_token', 'get_github_status',
 ]);
 const MANAGER_COMMANDS = new Set<CommandName>(['create_task', 'assign_task']);
 
@@ -73,6 +82,18 @@ function requireText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} is required`);
   return value.trim();
 }
+
+function firstLine(text: string, max: number): string {
+  const line = text.trim().split('\n')[0].trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+function expandHome(p: string): string {
+  return path.resolve(p.replace(/^~(?=$|[\\/])/, process.env.HOME ?? process.env.USERPROFILE ?? '~'));
+}
+
+const isRepo = (a: Agent) => a.kind === 'repo';
+const isStaff = (a: Agent) => a.kind !== 'repo';
 
 /**
  * The brain of Agent HQ: hires agents, routes tasks to them, runs their
@@ -96,12 +117,16 @@ export class Orchestrator {
   private readonly watchers = new Map<ID, number>();
   /** Agent terminal output, for the server to relay to viewers. */
   readonly terminals = new EventEmitter<{ data: [ID, string] }>();
+  private readonly mailbox: Mailbox;
+  /** Repo agents walking between the balcony and a hot desk. */
+  private readonly walks = new Map<ID, NodeJS.Timeout>();
 
   constructor(store: Store, db: Db, config: Config, terminal: BossTerminal) {
     this.store = store;
     this.db = db;
     this.config = config;
     this.terminal = terminal;
+    this.mailbox = new Mailbox(db);
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -129,10 +154,21 @@ export class Orchestrator {
     for (const agent of this.store.all('agent')) {
       if (!agent.ownerId || !this.store.get('user', agent.ownerId)) this.store.patch('agent', agent.id, { ownerId: owner.id });
     }
+    // Repo agents caught mid-run go back to the balcony and mail what happened,
+    // so their caller can resume from the inbox.
+    for (const agent of this.store.all('agent').filter(isRepo)) {
+      const task = agent.currentTaskId ? this.store.get('task', agent.currentTaskId) : undefined;
+      if (task?.status === 'in_progress') {
+        this.store.patch('task', task.id, { status: agent.repo?.readOnly ? 'done' : 'review' });
+        this.deliverReport(agent, task, `Agent HQ restarted before I finished. Reply to this mail and I'll pick up where I left off.`);
+      }
+      const repo = agent.repo ? { ...agent.repo, location: 'balcony' as const, deskIndex: null } : null;
+      this.store.patch('agent', agent.id, { status: 'idle', activity: null, live: false, currentTaskId: null, repo });
+    }
     // Sessions don't survive a restart. Agents come back idle (or offline if
     // their owner's runner isn't connected); unfinished tasks keep their
     // session id so a message resumes the conversation.
-    for (const agent of this.store.all('agent')) {
+    for (const agent of this.store.all('agent').filter(isStaff)) {
       const status = agent.ownerId === owner.id ? 'idle' : 'offline';
       if (agent.status !== status || agent.activity || agent.live) {
         this.store.patch('agent', agent.id, { status, activity: null, live: false });
@@ -143,9 +179,14 @@ export class Orchestrator {
       }
     }
     this.dispatch();
+    // Pick up agents added to (or removed from) the repositories meanwhile.
+    for (const project of this.store.all('project')) {
+      this.syncRepoAgents(project, localRunner).catch((err) => console.warn(`Could not read the agents of ${project.name}: ${err.message}`));
+    }
   }
 
   shutdown(): Promise<void> {
+    for (const timer of this.walks.values()) clearTimeout(timer);
     this.terminal.dispose();
     return Promise.all([...this.sessions.keys()].map((id) => this.endSession(id))).then(() => {});
   }
@@ -198,7 +239,7 @@ export class Orchestrator {
     const runner = new RemoteRunner(userId, send);
     this.remoteRunners.set(userId, runner);
     this.store.touch('user', userId, { runnerOnline: true });
-    for (const a of this.store.all('agent')) {
+    for (const a of this.store.all('agent').filter(isStaff)) {
       if (a.ownerId === userId && a.status === 'offline') this.store.patch('agent', a.id, { status: 'idle' });
     }
     this.dispatch();
@@ -210,14 +251,20 @@ export class Orchestrator {
     this.remoteRunners.delete(userId);
     runner.disconnect();
     if (this.store.get('user', userId)) this.store.touch('user', userId, { runnerOnline: false });
-    for (const a of this.store.all('agent')) {
+    // Repo agents working for this player get their sessions' exit and walk back to the balcony.
+    for (const a of this.store.all('agent').filter(isStaff)) {
       if (a.ownerId === userId) this.store.patch('agent', a.id, { status: 'offline', activity: null });
     }
   }
 
   private runnerFor(agent: Agent): Runner | null {
-    if (agent.ownerId === this.owner().id) return this.localRunner;
-    return this.remoteRunners.get(agent.ownerId) ?? null;
+    return this.runnerForUser(agent.ownerId);
+  }
+
+  /** The machine that runs a player's agents: the host for the owner, their `join` runner for members. */
+  private runnerForUser(userId: ID): Runner | null {
+    if (userId === this.owner().id) return this.localRunner;
+    return this.remoteRunners.get(userId) ?? null;
   }
 
   snapshot(actor: Actor): Snapshot {
@@ -227,6 +274,9 @@ export class Orchestrator {
     return {
       you,
       users: this.store.all('user'),
+      // Claude accounts are not implemented on the host yet.
+      accounts: [],
+      mail: actor.kind === 'user' ? this.mailbox.inbox(you.id) : [],
       buildings: this.store.all('building'),
       floors: this.store.all('floor'),
       projects: this.store.all('project'),
@@ -286,7 +336,7 @@ export class Orchestrator {
 
     remove_building: ({ id }) => {
       const floors = this.store.all('floor').filter((f) => f.buildingId === id);
-      if (floors.some((f) => this.store.all('agent').some((a) => a.floorId === f.id))) throw new Error('Move or fire the agents in this building first');
+      if (floors.some((f) => this.store.all('agent').some((a) => isStaff(a) && a.floorId === f.id))) throw new Error('Move or fire the agents in this building first');
       if (floors.some((f) => this.store.all('project').some((p) => p.floorId === f.id))) throw new Error('Remove the projects in this building first');
       for (const f of floors) this.store.remove('floor', f.id);
       this.store.remove('building', id);
@@ -304,7 +354,7 @@ export class Orchestrator {
     update_floor: ({ id, patch }) => {
       const floor = this.store.require('floor', id);
       if (patch.desks !== undefined) {
-        const seated = this.store.all('agent').filter((a) => a.floorId === id).length;
+        const seated = this.store.all('agent').filter((a) => isStaff(a) && a.floorId === id).length;
         if (!Number.isInteger(patch.desks) || patch.desks < Math.max(1, seated) || patch.desks > 24) {
           throw new Error(`Desks must be between ${Math.max(1, seated)} and 24`);
         }
@@ -313,46 +363,81 @@ export class Orchestrator {
     },
 
     remove_floor: ({ id }) => {
-      if (this.store.all('agent').some((a) => a.floorId === id)) throw new Error('Move or fire the agents on this floor first');
+      if (this.store.all('agent').some((a) => isStaff(a) && a.floorId === id)) throw new Error('Move or fire the agents on this floor first');
       if (this.store.all('project').some((p) => p.floorId === id)) throw new Error('Remove the projects on this floor first');
       this.store.remove('floor', id);
       return null;
     },
 
-    create_project: async ({ name, repoPath, floorId, initGit }) => {
+    create_project: async ({ name, repoPath, floorId, createGithubRepo }) => {
       this.store.require('floor', floorId);
-      const dir = path.resolve(requireText(repoPath, 'repoPath').replace(/^~(?=$|[\\/])/, process.env.HOME ?? process.env.USERPROFILE ?? '~'));
-      if (!existsSync(dir) && !initGit) throw new Error(`Directory not found: ${dir}`);
-      let git = existsSync(dir) && (await hasCommits(dir));
-      if (!git && initGit) git = await initRepo(dir);
-      return this.store.put('project', {
-        id: randomUUID(), name: requireText(name, 'name'), repoPath: dir, remoteUrl: git ? await originUrl(dir) : null,
-        floorId, git, createdAt: Date.now(),
+      const projectName = requireText(name, 'name');
+      const dir = expandHome(requireText(repoPath, 'repoPath'));
+      const github = await this.linkGithub(dir, createGithubRepo ?? null);
+      const project = this.store.put('project', {
+        id: randomUUID(), name: projectName, repoPath: dir, remoteUrl: github.remoteUrl, githubUrl: github.githubUrl,
+        floorId, git: await hasCommits(dir), createdAt: Date.now(),
       });
+      this.syncRepoAgents(project).catch((err) => console.warn(`Could not read the agents of ${project.name}: ${err.message}`));
+      return project;
     },
 
-    remove_project: ({ id }) => {
+    link_project_github: async ({ id, createGithubRepo }) => {
+      const project = this.store.require('project', id);
+      const github = await this.linkGithub(project.repoPath, createGithubRepo ?? null);
+      const linked = this.store.patch('project', id, { ...github, git: await hasCommits(project.repoPath) });
+      this.syncRepoAgents(linked).catch(() => {});
+      return linked;
+    },
+
+    scan_repo_agents: ({ projectId }, user) => {
+      const project = this.store.require('project', projectId);
+      // Read your own checkout when you have a runner; the host's otherwise.
+      return this.syncRepoAgents(project, this.runnerForUser(user.id) ?? this.localRunner);
+    },
+
+    set_github_token: async ({ token }) => {
+      const value = typeof token === 'string' && token.trim() ? token.trim() : null;
+      this.db.setKv('githubToken', value);
+      return { configured: (await githubStatus(value)).configured };
+    },
+
+    get_github_status: async () => {
+      const { configured, source, login } = await githubStatus(this.githubToken());
+      return { configured, source, login };
+    },
+
+    remove_project: async ({ id }) => {
       if (this.store.all('task').some((t) => t.projectId === id && t.status === 'in_progress')) {
         throw new Error('Project has tasks in progress');
       }
+      const crew = this.store.all('agent').filter((a) => a.repo?.projectId === id);
+      const busy = crew.find((a) => a.repo?.location !== 'balcony' || this.sessions.has(a.id));
+      if (busy) throw new Error(`${busy.name} is still working on this project`);
       for (const t of this.store.all('task')) if (t.projectId === id) this.store.remove('task', t.id);
+      for (const a of crew) this.store.remove('agent', a.id);
       this.store.remove('project', id);
       return null;
     },
 
     // ---- agents
     hire_agent: ({ name, role, floorId, model, instructions, permissionMode, isManager, integrations, appearance }, user) => {
-      if (this.store.all('agent').length >= this.store.settings.maxAgents) {
+      // Repo agents come with the projects; only hired staff count against the limits.
+      const staff = this.store.all('agent').filter(isStaff);
+      if (staff.length >= this.store.settings.maxAgents) {
         throw new Error(`The company is at its limit of ${this.store.settings.maxAgents} agents. Raise it in settings.`);
       }
       const floor = this.store.require('floor', floorId);
-      if (this.store.all('agent').filter((a) => a.floorId === floorId).length >= floor.desks) {
+      if (staff.filter((a) => a.floorId === floorId).length >= floor.desks) {
         throw new Error(`No free desk on ${floor.name}. Expand the floor first.`);
       }
       const known = new Set(this.store.settings.integrations.map((i) => i.id));
       const online = user.id === this.owner().id || this.remoteRunners.has(user.id);
       const agent = this.store.put('agent', {
         id: randomUUID(),
+        kind: 'staff',
+        repo: null,
+        accountId: null,
         name: requireText(name, 'name'),
         role: requireText(role, 'role'),
         adapter: 'claude-code',
@@ -376,10 +461,17 @@ export class Orchestrator {
     },
 
     update_agent: ({ id, patch }, user) => {
+      const current = this.store.require('agent', id);
+      if (isRepo(current)) {
+        // Who they are comes from the repository; anyone may restyle them or tune how they run.
+        const { appearance, model, permissionMode, instructions } = patch;
+        const allowed = Object.fromEntries(Object.entries({ appearance, model, permissionMode, instructions }).filter(([, v]) => v !== undefined));
+        return this.store.patch('agent', id, allowed);
+      }
       this.ownAgent(id, user);
-      if (patch.floorId && patch.floorId !== this.store.require('agent', id).floorId) {
+      if (patch.floorId && patch.floorId !== current.floorId) {
         const floor = this.store.require('floor', patch.floorId);
-        if (this.store.all('agent').filter((a) => a.floorId === floor.id).length >= floor.desks) throw new Error(`No free desk on ${floor.name}`);
+        if (this.store.all('agent').filter((a) => isStaff(a) && a.floorId === floor.id).length >= floor.desks) throw new Error(`No free desk on ${floor.name}`);
       }
       const agent = this.store.patch('agent', id, patch);
       if (patch.floorId) this.dispatch();
@@ -388,6 +480,9 @@ export class Orchestrator {
 
     fire_agent: async ({ id }, user) => {
       const agent = this.store.require('agent', id);
+      if (isRepo(agent)) {
+        throw new Error(`${agent.name} comes with the repository and can't be fired. Remove ${agent.repo?.agentName ?? agent.name} from .claude/agents to let them go.`);
+      }
       if (agent.ownerId !== user.id && user.role !== 'owner') this.ownAgent(id, user);
       await this.endSession(id);
       for (const t of this.store.all('task')) {
@@ -401,7 +496,7 @@ export class Orchestrator {
     // ---- board
     create_task: ({ projectId, title, description, assigneeId }, user, actor) => {
       this.store.require('project', projectId);
-      if (assigneeId) this.store.require('agent', assigneeId);
+      if (assigneeId && isRepo(this.store.require('agent', assigneeId))) throw new Error('Repo agents only work when summoned from the balcony');
       const now = Date.now();
       const task = this.store.put('task', {
         id: randomUUID(), projectId, title: requireText(title, 'title'), description: description ?? '',
@@ -418,6 +513,10 @@ export class Orchestrator {
 
     update_task: async ({ id, patch }) => {
       const before = this.store.require('task', id);
+      const assignee = before.assigneeId ? this.store.get('agent', before.assigneeId) : undefined;
+      if (assignee && isRepo(assignee) && (patch.status === 'todo' || patch.status === 'in_progress') && patch.status !== before.status) {
+        throw new Error(`To continue with ${assignee.name}, reply to their report in your inbox`);
+      }
       const task = this.store.patch('task', id, patch);
       if (patch.status && patch.status !== before.status && (patch.status === 'done' || patch.status === 'failed')) {
         await this.closeTask(task);
@@ -436,6 +535,7 @@ export class Orchestrator {
     assign_task: async ({ taskId, agentId }) => {
       const task = this.store.require('task', taskId);
       const agent = this.store.require('agent', agentId);
+      if (isRepo(agent)) throw new Error('Repo agents only work when summoned from the balcony');
       if (task.status === 'done') throw new Error('Task is already done');
       if (!this.isAvailable(agent, true)) {
         // Queue it: the agent picks it up as soon as it's free.
@@ -454,6 +554,7 @@ export class Orchestrator {
         live.session.send(body);
         return null;
       }
+      if (isRepo(agent)) throw new Error(`${agent.name} is on the balcony. Summon them, or reply to one of their reports in your inbox.`);
       // No session: continue the current task's conversation, or start a free one.
       const task = agent.currentTaskId ? this.store.get('task', agent.currentTaskId) : undefined;
       if (task && task.status !== 'done') await this.startTask(agent, task, body);
@@ -465,6 +566,7 @@ export class Orchestrator {
       const agent = this.store.require('agent', agentId);
       const mine = agent.ownerId === user.id;
       if (!this.sessions.has(agentId)) {
+        if (isRepo(agent)) throw new Error(`${agent.name} is on the balcony. Summon them to put them to work.`);
         if (!mine) throw new Error(`${agent.name} isn't working right now; only their owner can start a session`);
         const task = agent.currentTaskId ? this.store.get('task', agent.currentTaskId) : undefined;
         // Reopen the current task's conversation, or start a free one.
@@ -523,6 +625,70 @@ export class Orchestrator {
 
     get_transcript: ({ agentId, limit }) => this.db.transcript(agentId, Math.min(limit ?? 500, 2000)),
 
+    // ---- repo agents (balcony crew)
+    invoke_repo_agent: async ({ agentId, prompt, accountId }, user) => {
+      const agent = this.repoAgent(agentId);
+      const text = requireText(prompt, 'prompt');
+      this.requireOnBalcony(agent);
+      const now = Date.now();
+      // Each call is a conversation: a board task holds its session, and a
+      // worktree branch for agents that edit.
+      const task = this.store.put('task', {
+        id: randomUUID(), projectId: agent.repo!.projectId, title: `${agent.name}: ${firstLine(text, 70)}`, description: text,
+        status: 'in_progress', assigneeId: agent.id, sessionId: null, branch: null, worktreePath: null,
+        createdBy: user.id, createdAt: now, updatedAt: now,
+      });
+      try {
+        await this.summon(agent, user, task, text, accountId ?? null);
+      } catch (err) {
+        this.store.remove('task', task.id);
+        throw err;
+      }
+      return this.store.require('agent', agentId);
+    },
+
+    // ---- inbox
+    mark_mail_read: ({ id }, user) => {
+      this.ownMail(id, user);
+      this.store.broadcast({ type: 'mail', mail: this.mailbox.patch(id, { read: true }) });
+      return null;
+    },
+
+    reply_mail: async ({ id, text }, user) => {
+      const mail = this.ownMail(id, user);
+      const body = requireText(text, 'text');
+      const agent = this.store.get('agent', mail.fromAgentId);
+      if (!agent?.repo) throw new Error('That agent is no longer in the repository');
+      const task = mail.taskId ? this.store.get('task', mail.taskId) : undefined;
+      if (!task) throw new Error('This conversation is gone (its task was removed from the board). Summon the agent again from the balcony.');
+      if (!mail.read) this.store.broadcast({ type: 'mail', mail: this.mailbox.patch(id, { read: true }) });
+      const live = this.sessions.get(agent.id);
+      if (live && live.taskId === task.id && agent.ownerId === user.id) {
+        // Still at the desk in this conversation: just keep talking.
+        this.store.patch('task', task.id, { status: 'in_progress' });
+        live.session.send(body);
+        return null;
+      }
+      this.requireOnBalcony(agent);
+      this.store.patch('task', task.id, { status: 'in_progress', assigneeId: agent.id });
+      await this.summon(agent, user, this.store.require('task', task.id), body, agent.accountId);
+      return null;
+    },
+
+    delete_mail: ({ id }, user) => {
+      this.ownMail(id, user);
+      this.mailbox.remove(id);
+      return null;
+    },
+
+    // ---- Claude accounts: not implemented on the host yet
+    add_account: () => { throw new Error('Claude accounts are not available yet'); },
+    account_login_input: () => { throw new Error('Claude accounts are not available yet'); },
+    refresh_accounts: () => [],
+    remove_account: () => { throw new Error('Claude accounts are not available yet'); },
+    set_agent_account: () => { throw new Error('Claude accounts are not available yet'); },
+    take_over_agent: () => { throw new Error('Taking over agents is not available yet'); },
+
     get_usage_report: () =>
       this.db.usageReport({
         agents: new Map(this.store.all('agent').map((a) => [a.id, a.name])),
@@ -566,7 +732,13 @@ export class Orchestrator {
     remove_member: async ({ id }) => {
       const member = this.store.require('user', id);
       if (member.role === 'owner') throw new Error('The owner cannot be removed');
-      for (const a of this.store.all('agent').filter((x) => x.ownerId === id)) await this.handlers.fire_agent({ id: a.id }, this.owner(), { kind: 'user', user: this.owner() });
+      for (const a of this.store.all('agent').filter((x) => x.ownerId === id && isStaff(x))) await this.handlers.fire_agent({ id: a.id }, this.owner(), { kind: 'user', user: this.owner() });
+      // Repo agents can't be fired: stop their work for this member and hand them back to the owner.
+      for (const a of this.store.all('agent').filter((x) => x.ownerId === id && isRepo(x))) {
+        await this.endSession(a.id);
+        this.backToBalcony(a.id);
+        this.store.patch('agent', a.id, { ownerId: this.owner().id });
+      }
       for (const inv of this.store.all('invite').filter((i) => i.usedBy === id)) this.store.remove('invite', inv.id);
       this.store.remove('user', id);
       return null;
@@ -603,7 +775,8 @@ export class Orchestrator {
   /** Hands queued tasks to free agents. Explicit assignments always run; open tasks only in auto mode. */
   dispatch() {
     const todo = this.store.all('task').filter((t) => t.status === 'todo').sort((a, b) => a.createdAt - b.createdAt);
-    for (const agent of this.store.all('agent')) {
+    // Repo agents only work when someone summons them.
+    for (const agent of this.store.all('agent').filter(isStaff)) {
       let next = this.isAvailable(agent, true) ? todo.find((t) => t.assigneeId === agent.id) : undefined;
       if (!next && this.store.settings.dispatchMode === 'auto' && this.isAvailable(agent)) {
         // Managers plan and delegate; they don't grab open tasks themselves.
@@ -663,10 +836,13 @@ export class Orchestrator {
           prompt,
           mcpServers: Object.fromEntries(integrations.map((i) => [i.id, i.config])),
           hq: { url: `ws://127.0.0.1:${this.config.port}`, token, manager: agent.isManager },
+          // Claude accounts are not implemented on the host yet: always the machine's default login.
+          configDir: null,
+          repoAgentName: agent.repo?.agentName ?? null,
         },
         (e) => this.onSessionEvent(agent.id, taskId, sessionKey, e),
       );
-      this.sessions.set(agent.id, { session, taskId, closing: false, token, key: sessionKey, interactive: null, buffer: '' });
+      this.sessions.set(agent.id, { session, taskId, closing: false, token, key: sessionKey, interactive: null, buffer: '', lastText: null });
       this.store.patch('agent', agent.id, { live: true, ...(prompt ? {} : { status: 'idle', activity: null }) });
     } catch (err) {
       this.store.patch('agent', agent.id, { status: 'error', activity: null });
@@ -700,7 +876,8 @@ export class Orchestrator {
       }
     }
     const project = this.store.get('project', task.projectId);
-    const runner = agent ? this.runnerFor(agent) : this.localRunner;
+    // A repo agent's worktree lives on the machine of whoever summoned it for this task.
+    const runner = agent?.kind === 'repo' ? this.runnerForUser(task.createdBy) : agent ? this.runnerFor(agent) : this.localRunner;
     if (project && task.worktreePath && runner && (await runner.cleanup(project, task))) {
       if (this.store.get('task', task.id)) this.store.patch('task', task.id, { worktreePath: null });
     }
@@ -732,10 +909,12 @@ export class Orchestrator {
 
       case 'transcript':
         this.log(agentId, taskId, e.kind, e.text, e.meta);
+        if (current && e.kind === 'text' && !e.meta?.subagent) live!.lastText = e.text;
         return;
 
       case 'turn_start':
         if (!current) return;
+        live!.lastText = null;
         if (e.prompt.trim()) this.log(agentId, taskId, 'user', e.prompt);
         this.store.patch('agent', agentId, { status: 'working', activity: 'Thinking…' });
         if (task && task.status !== 'in_progress' && task.status !== 'done') this.store.patch('task', task.id, { status: 'in_progress' });
@@ -770,6 +949,12 @@ export class Orchestrator {
         else this.log(agentId, taskId, 'result', e.interrupted ? 'Interrupted.' : 'Turn finished.', { usage: e.usage });
         if (!current) return;
         this.clearApprovals(agentId);
+        if (isRepo(agent) && task) {
+          // Interrupted from the terminal: the caller is at the desk, keep the session.
+          if (e.interrupted) this.store.patch('agent', agentId, { status: 'idle', activity: 'Interrupted — type in the terminal to continue' });
+          else this.finishRepoRun(agent, task, live!.lastText, e.error);
+          return;
+        }
         const xp = this.store.settings.gamification && e.ok ? agent.xp + XP_PER_TURN : agent.xp;
         this.store.patch('agent', agentId, { status: 'idle', activity: null, xp });
         if (task?.status === 'in_progress') this.store.patch('task', task.id, { status: 'review' });
@@ -791,12 +976,203 @@ export class Orchestrator {
         if (expected) return;
         this.clearApprovals(agentId);
         if (e.error) this.log(agentId, taskId, 'error', `Session ended: ${e.error}`);
+        if (isRepo(agent)) {
+          if (task) this.finishRepoRun(agent, task, live!.lastText, e.error ?? 'The session ended before the agent finished.');
+          else this.backToBalcony(agentId);
+          return;
+        }
         const offline = !this.runnerFor(agent);
         this.store.patch('agent', agentId, { live: false, status: offline ? 'offline' : e.error ? 'error' : 'idle', activity: null });
         this.dispatch();
         return;
       }
     }
+  }
+
+  // ------------------------------------------------------------------ projects & repo agents
+
+  private githubToken(): string | null {
+    return this.db.getKv<string | null>('githubToken');
+  }
+
+  /**
+   * Links `dir` to GitHub: checks its origin, or creates the GitHub repository
+   * (initializing git first when needed) and makes it the origin.
+   */
+  private async linkGithub(dir: string, create: { name: string; private: boolean } | null): Promise<{ remoteUrl: string; githubUrl: string }> {
+    if (!create) {
+      if (!existsSync(dir)) throw new Error(`Directory not found: ${dir}`);
+      return requireGithubOrigin(dir);
+    }
+    mkdirSync(dir, { recursive: true });
+    // A folder inside another repository gets a repository of its own.
+    if ((!(await isRepoRoot(dir)) || !(await hasCommits(dir))) && !(await initRepo(dir))) {
+      throw new Error(`Could not initialize a git repository with a first commit in ${dir}. Check that git is installed and has a user.name and user.email.`);
+    }
+    const existing = await originUrl(dir);
+    if (existing) throw new Error(`${dir} already has an origin (${existing}). Link the existing repository instead.`);
+    const url = await createGithubRepo(dir, create, this.githubToken());
+    return { remoteUrl: `${url}.git`, githubUrl: url };
+  }
+
+  /** Mirrors the project's .claude/agents as repo agents on the floor's balcony. */
+  private async syncRepoAgents(project: Project, runner: Runner | null = this.localRunner): Promise<Agent[]> {
+    if (!runner) throw new Error('No machine is available to read the repository');
+    const defs = await runner.scanAgents(project);
+    if (!this.store.get('project', project.id)) return [];
+    const crew = () => this.store.all('agent').filter((a) => a.repo?.projectId === project.id);
+    const seen = new Set<ID>();
+    for (const def of defs) {
+      const existing = crew().find((a) => a.repo!.agentName === def.name);
+      const role = firstLine(def.description, 80) || 'Repo agent';
+      if (existing) {
+        seen.add(existing.id);
+        const repo = { ...existing.repo!, description: def.description, readOnly: def.readOnly };
+        if (existing.role !== role || existing.floorId !== project.floorId || JSON.stringify(repo) !== JSON.stringify(existing.repo)) {
+          this.store.patch('agent', existing.id, { role, floorId: project.floorId, repo });
+        }
+        continue;
+      }
+      const agent = this.store.put('agent', {
+        id: randomUUID(),
+        kind: 'repo',
+        repo: {
+          projectId: project.id, agentName: def.name, description: def.description, readOnly: def.readOnly,
+          location: 'balcony', deskIndex: null, invokedBy: null,
+        },
+        accountId: null,
+        name: def.name,
+        role,
+        adapter: 'claude-code',
+        model: def.model,
+        instructions: '',
+        // Agents that edit work in their own worktree, so file edits need no approval.
+        permissionMode: def.permissionMode ?? 'acceptEdits',
+        isManager: false,
+        integrations: [],
+        floorId: project.floorId,
+        ownerId: this.owner().id,
+        appearance: randomAppearance(pick(PALETTE)),
+        status: 'idle',
+        activity: null,
+        currentTaskId: null,
+        live: false,
+        xp: 0,
+        createdAt: Date.now(),
+      });
+      seen.add(agent.id);
+    }
+    // Agents removed from the repository leave once they're back on the balcony.
+    for (const a of crew()) {
+      if (!seen.has(a.id) && a.repo!.location === 'balcony' && !this.sessions.has(a.id)) this.store.remove('agent', a.id);
+    }
+    return crew();
+  }
+
+  private repoAgent(id: ID): Agent & { repo: NonNullable<Agent['repo']> } {
+    const agent = this.store.require('agent', id);
+    if (!agent.repo) throw new Error(`${agent.name} is not a repo agent`);
+    return agent as Agent & { repo: NonNullable<Agent['repo']> };
+  }
+
+  /** Free to be summoned: on the balcony, or walking back to it (they turn around). */
+  private requireOnBalcony(agent: Agent) {
+    const free = agent.repo?.location === 'balcony' || agent.repo?.location === 'to_balcony';
+    if (free && !this.sessions.has(agent.id) && !this.starting.has(agent.id)) return;
+    const boss = agent.repo?.invokedBy ? this.store.get('user', agent.repo.invokedBy) : undefined;
+    throw new Error(`${agent.name} is busy${boss ? ` working for ${boss.name}` : ''}; try again when they're back on the balcony`);
+  }
+
+  private ownMail(id: ID, user: User): Mail & { taskId: ID | null } {
+    const mail = this.mailbox.get(id);
+    if (!mail || mail.toUserId !== user.id) throw new Error('Mail not found');
+    return mail;
+  }
+
+  /**
+   * Puts a repo agent to work for `user`, on `user`'s machine and Claude
+   * login: it walks to a free hot desk while its session starts.
+   */
+  private async summon(agent: Agent, user: User, task: Task, prompt: string, accountId: ID | null) {
+    if (!agent.repo) throw new Error(`${agent.name} is not a repo agent`);
+    if (!this.runnerForUser(user.id)) {
+      throw new Error(`Your machine isn't connected: start your runner (npm run join …) so ${agent.name} can work with your Claude login`);
+    }
+    // Still walking away from a desk: go back to it. Otherwise take the first free one.
+    let deskIndex = agent.repo.deskIndex ?? 0;
+    if (agent.repo.deskIndex === null) {
+      const taken = new Set(this.store.all('agent').filter((a) => a.floorId === agent.floorId && a.repo?.deskIndex != null).map((a) => a.repo!.deskIndex));
+      while (taken.has(deskIndex)) deskIndex++;
+    }
+    const resumed = task.sessionId !== null;
+    agent = this.store.patch('agent', agent.id, {
+      ownerId: user.id,
+      accountId,
+      currentTaskId: task.id,
+      status: 'working',
+      activity: 'Walking to a desk',
+      repo: { ...agent.repo, location: 'to_desk', deskIndex, invokedBy: user.id },
+    });
+    this.walk(agent.id, 'desk');
+    this.log(agent.id, task.id, 'system', `${resumed ? 'Called back' : 'Summoned'} by ${user.name}`);
+    try {
+      await this.openSession(agent, task, prompt);
+    } catch (err) {
+      this.backToBalcony(agent.id);
+      throw err;
+    }
+  }
+
+  private walk(agentId: ID, to: 'desk' | 'balcony') {
+    clearTimeout(this.walks.get(agentId));
+    this.walks.set(agentId, setTimeout(() => {
+      this.walks.delete(agentId);
+      const agent = this.store.get('agent', agentId);
+      if (!agent?.repo) return;
+      if (to === 'desk' && agent.repo.location === 'to_desk') this.store.patch('agent', agentId, { repo: { ...agent.repo, location: 'desk' } });
+      if (to === 'balcony' && agent.repo.location === 'to_balcony') this.store.patch('agent', agentId, { repo: { ...agent.repo, location: 'balcony', deskIndex: null } });
+    }, WALK_MS));
+  }
+
+  private backToBalcony(agentId: ID) {
+    const agent = this.store.get('agent', agentId);
+    if (!agent?.repo) return;
+    const atDesk = agent.repo.deskIndex !== null;
+    this.store.patch('agent', agentId, {
+      status: 'idle', activity: null, currentTaskId: null, live: this.sessions.has(agentId),
+      repo: { ...agent.repo, location: atDesk ? 'to_balcony' : 'balcony' },
+    });
+    if (atDesk) this.walk(agentId, 'balcony');
+    else clearTimeout(this.walks.get(agentId));
+  }
+
+  /** A repo agent's turn ended: mail the report to its caller and send it back to the balcony. */
+  private finishRepoRun(agent: Agent, task: Task, report: string | null, error: string | null) {
+    const parts = [report?.trim() || (error ? '' : '_(I finished without writing a report.)_')];
+    if (error) parts.push(`**The run failed:** ${error}`);
+    if (task.branch) parts.push(`---\nMy changes are on branch \`${task.branch}\`. Review them from the board; marking the task done removes the worktree and keeps the branch.`);
+    this.deliverReport(agent, task, parts.filter(Boolean).join('\n\n'));
+    this.store.patch('task', task.id, { status: error ? 'failed' : agent.repo?.readOnly ? 'done' : 'review' });
+    this.endSession(agent.id).catch(() => {});
+    this.backToBalcony(agent.id);
+    const xp = this.store.settings.gamification && !error ? agent.xp + XP_PER_TURN : agent.xp;
+    if (xp !== agent.xp) this.store.patch('agent', agent.id, { xp });
+  }
+
+  private deliverReport(agent: Agent, task: Task, body: string): Mail | null {
+    const to = agent.repo?.invokedBy ?? task.createdBy;
+    if (!this.store.get('user', to)) return null;
+    const previous = this.mailbox.latestForTask(task.id);
+    const subject = previous
+      ? (previous.subject.startsWith('Re: ') ? previous.subject : `Re: ${previous.subject}`)
+      : firstLine(task.description, 90) || task.title;
+    const mail = this.mailbox.put({
+      id: randomUUID(), toUserId: to, fromAgentId: agent.id, taskId: task.id, subject, body,
+      read: false, inReplyTo: previous?.id ?? null, createdAt: Date.now(),
+    });
+    this.store.broadcast({ type: 'mail', mail });
+    this.log(agent.id, task.id, 'system', `Report sent to ${this.store.get('user', to)?.name ?? 'the caller'}'s inbox`);
+    return mail;
   }
 
   // ------------------------------------------------------------------ terminals

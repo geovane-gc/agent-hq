@@ -270,3 +270,40 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
   .board { grid-template-columns: repeat(5, 220px); overflow-x: auto; }
   .grid2 { grid-template-columns: 1fr; }
 }
+
+/* ---------- balcony crew (repo agents), inbox */
+.tag.repo-agent { border-color: #9b7a58; background: #fffaf3; }
+.tag.repo-agent.busy { border-style: dashed; }
+.mail-badge { margin-left: 6px; background: var(--error); color: #fff; border-radius: 999px; padding: 0 6px; font-size: 11px; }
+.mail-alerts { position: absolute; bottom: 20px; right: 16px; display: flex; flex-direction: column; gap: 6px; z-index: 6; }
+.mail-alert { background: var(--accent); font-weight: 600; box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); animation: monitor-in 0.25s ease-out; }
+.inbox { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 14px; height: min(64vh, 620px); }
+.mail-list { list-style: none; margin: 0; padding: 0; overflow: auto; border-right: 1px solid var(--border); padding-right: 8px; display: flex; flex-direction: column; gap: 4px; }
+.mail-item { width: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 2px; text-align: left; background: transparent; color: var(--text); border-color: transparent; padding: 8px 10px; }
+.mail-item:hover { background: var(--surface-2); }
+.mail-item.active { background: var(--surface-2); border-color: var(--border); }
+.mail-item.unread .mail-item-subject { font-weight: 700; }
+.mail-from { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.mail-from .muted { margin-left: auto; }
+.unread-dot { width: 8px; height: 8px; background: var(--accent); }
+.mail-item-subject, .mail-snippet { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-view { display: flex; flex-direction: column; gap: 10px; overflow: auto; min-height: 0; padding-right: 4px; }
+.mail-view h3.mail-subject { text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--text); margin: 0 0 2px; }
+.mail-reply { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; margin-top: auto; }
+.mail-thread { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.mail-thread summary { cursor: pointer; }
+.mail-earlier { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 6px; }
+.mail-empty { padding: 24px; text-align: center; }
+.markdown { line-height: 1.55; word-break: break-word; }
+.markdown p, .markdown ul, .markdown ol { margin: 0 0 8px; }
+.markdown h4 { margin: 10px 0 6px; font-size: 14px; }
+.markdown code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.markdown pre { max-height: none; }
+.markdown hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+.summon-about { margin: 0; white-space: pre-wrap; max-height: 160px; overflow: auto; }
+.github-login { display: flex; flex-direction: column; gap: 8px; }
+.github-login .row input { flex: 1; width: auto; min-width: 180px; }
+@media (max-width: 900px) {
+  .inbox { grid-template-columns: 1fr; height: auto; }
+  .mail-list { border-right: none; max-height: 30vh; }
+}

@@ -5,9 +5,10 @@ import { AgentPanel } from './components/AgentPanel.tsx';
 import { AgentTerminal } from './components/AgentTerminal.tsx';
 import { Board } from './components/Board.tsx';
 import { AgentModal, BuildingModal, FloorModal, NewFloorModal, NewProjectModal, NewTaskModal } from './components/forms.tsx';
+import { BossComputer, MailAlerts } from './components/Inbox.tsx';
 import { Modal } from './components/Modal.tsx';
 import { SettingsModal } from './components/Settings.tsx';
-import { BossTerminal } from './components/Terminal.tsx';
+import { SummonModal } from './components/SummonModal.tsx';
 import { RateMeters, UsageModal } from './components/Usage.tsx';
 import { CampusScene } from './office3d/CampusScene.tsx';
 import type { CameraMode } from './office3d/Controls.tsx';
@@ -21,7 +22,8 @@ type Overlay =
   | { kind: 'new-floor'; buildingId: ID }
   | { kind: 'floor' }
   | { kind: 'board' }
-  | { kind: 'terminal' }
+  | { kind: 'computer'; mailId?: ID }
+  | { kind: 'summon'; agentId: ID }
   | { kind: 'usage' }
   | { kind: 'settings'; tab?: 'general' | 'integrations' | 'team' }
   | null;
@@ -75,7 +77,7 @@ function Directory(props: { world: Snapshot; floorId: ID | null; onFloor: (id: I
             {props.owner && <button className="link small" onClick={() => props.open({ kind: 'building', id: b.id })}>edit</button>}
           </div>
           {world.floors.filter((f) => f.buildingId === b.id).sort((x, y) => y.level - x.level).map((f) => {
-            const agents = world.agents.filter((a) => a.floorId === f.id);
+            const agents = world.agents.filter((a) => a.floorId === f.id && a.kind !== 'repo');
             const waiting = agents.some((a) => a.status === 'awaiting_approval');
             const busy = agents.filter((a) => a.status === 'working').length;
             return (
@@ -192,7 +194,8 @@ export function App() {
           onRecruit={() => setOverlay({ kind: 'hire' })}
           onBoard={() => setOverlay({ kind: 'board' })}
           onElevator={nextFloor}
-          onTerminal={world.terminalAvailable ? () => setOverlay({ kind: 'terminal' }) : null}
+          onTerminal={() => setOverlay({ kind: 'computer' })}
+          onSummon={(agentId) => setOverlay({ kind: 'summon', agentId })}
         />
       ) : (
         <div className="splash"><p className="muted">No floors yet.</p></div>
@@ -243,6 +246,7 @@ export function App() {
       )}
 
       <ApprovalAlerts world={world} onOpen={openAgent} />
+      <MailAlerts world={world} onOpen={(mailId) => setOverlay({ kind: 'computer', mailId })} />
 
       {terminalAgentId && view === 'office' && (
         <AgentTerminal
@@ -277,7 +281,8 @@ export function App() {
       {overlay?.kind === 'building' && <BuildingModal building={world.buildings.find((b) => b.id === overlay.id)} onClose={close} />}
       {overlay?.kind === 'new-floor' && <NewFloorModal buildingId={overlay.buildingId} onClose={close} />}
       {overlay?.kind === 'floor' && floor && <FloorModal floor={floor} world={world} onClose={close} />}
-      {overlay?.kind === 'terminal' && <BossTerminal onClose={close} />}
+      {overlay?.kind === 'computer' && <BossComputer world={world} initialMailId={overlay.mailId} onClose={close} onOpenAgent={openAgent} />}
+      {overlay?.kind === 'summon' && <SummonModal world={world} agentId={overlay.agentId} onClose={close} onOpenAgent={openAgent} />}
       {overlay?.kind === 'usage' && <UsageModal onClose={close} />}
       {overlay?.kind === 'settings' && <SettingsModal world={world} initial={overlay.tab} onClose={close} />}
       <Toasts />

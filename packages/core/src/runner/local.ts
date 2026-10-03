@@ -4,7 +4,8 @@ import type { ID, Project, RunnerSessionEvent, RunnerStart, Task } from '@agent-
 import type { AgentAdapter, AgentSession, PermissionDecision } from '../adapters/adapter.ts';
 import { addWorktree, removeWorktree } from '../git.ts';
 import { platformMcpConfig } from '../integrations.ts';
-import { agentWorkspace, buildSystemPrompt, memoryFile } from '../memory.ts';
+import { agentWorkspace, buildSystemPrompt, memoryFile, repoAgentSystemPrompt } from '../memory.ts';
+import { scanRepoAgents, type RepoAgentDef } from '../repo-agents.ts';
 import { HookServer } from './hook-server.ts';
 import type { Runner, RunnerSession } from './runner.ts';
 
@@ -68,7 +69,9 @@ export class LocalRunner implements Runner {
       if (project) {
         const ws = await this.resolveRepo(project);
         cwd = ws.repoPath;
-        if (task && ws.git && !(task.worktreePath && existsSync(task.worktreePath))) {
+        // Read-only repo agents work in the checkout itself; everyone else gets a worktree per task.
+        const isolate = !agent.repo?.readOnly;
+        if (task && ws.git && isolate && !(task.worktreePath && existsSync(task.worktreePath))) {
           const branch = task.branch ?? `hq/${slug(agent.name)}-${task.id.slice(0, 8)}`;
           // Short ids keep paths under Windows' MAX_PATH once git adds its own nesting.
           const worktreePath = path.join(this.dataDir, 'wt', project.id.slice(0, 8), task.id.slice(0, 8));
@@ -82,21 +85,26 @@ export class LocalRunner implements Runner {
       }
       if (closed) return;
 
-      const memoryPath = memoryFile(this.dataDir, agent, project);
       const hqArgs = [HQ_MCP, '--url', this.hqUrl, '--token', start.hq.token, ...(start.hq.manager ? ['--manager'] : [])];
       const hookUrl = await this.hookServer.url();
+      // Repo agents bring their own definition (prompt, tools, model): no notes, board tools or integrations.
+      const repoAgent = start.repoAgentName && project ? start.repoAgentName : null;
+      const memoryPath = repoAgent ? null : memoryFile(this.dataDir, agent, project);
       session = adapter.start(
         {
           cwd,
           model: agent.model,
           permissionMode: agent.permissionMode,
-          systemPrompt: buildSystemPrompt({ agent, project, task, memoryPath, remote: this.remote }),
+          systemPrompt: memoryPath
+            ? buildSystemPrompt({ agent, project, task, memoryPath, remote: this.remote })
+            : repoAgentSystemPrompt({ agent, project: project!, task, remote: this.remote }),
           resumeSessionId: task?.sessionId ?? null,
-          addDirs: [path.dirname(memoryPath)],
-          mcpServers: {
+          addDirs: memoryPath ? [path.dirname(memoryPath)] : [],
+          mcpServers: repoAgent ? {} : {
             'agent-hq': { type: 'stdio', command: process.execPath, args: ['--no-warnings', ...hqArgs] },
             ...Object.fromEntries(Object.entries(start.mcpServers).map(([k, v]) => [k, platformMcpConfig(v as Record<string, unknown>)])),
           },
+          agentName: repoAgent,
           initialPrompt: start.prompt,
           hooks: { url: hookUrl, register: (handler) => this.hookServer.register(handler) },
         },
@@ -122,6 +130,11 @@ export class LocalRunner implements Runner {
         if (session) await session.close();
       },
     };
+  }
+
+  async scanAgents(project: Project): Promise<RepoAgentDef[]> {
+    const ws = await this.resolveRepo(project);
+    return scanRepoAgents(ws.repoPath);
   }
 
   async cleanup(project: Project, task: Task): Promise<boolean> {

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { HostToRunner, ID, Project, RunnerOp, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
+import type { HostToRunner, ID, Project, RunnerMessage, RunnerOp, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
+import type { RepoAgentDef } from '../repo-agents.ts';
 import type { Runner, RunnerSession } from './runner.ts';
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+/** Runner ops answered with a `runner_reply`. */
+type RequestOp = DistributiveOmit<Extract<RunnerOp, { requestKey: string }>, 'requestKey'>;
 
 /**
  * Host-side proxy for a teammate's runner process. Operations go down the
@@ -12,6 +17,7 @@ export class RemoteRunner implements Runner {
   private readonly sessions = new Map<string, (e: RunnerSessionEvent) => void>();
   private readonly closing = new Map<string, () => void>();
   private readonly cleanups = new Map<string, (ok: boolean) => void>();
+  private readonly requests = new Map<string, { resolve: (result: unknown) => void; reject: (err: Error) => void }>();
 
   constructor(userId: ID, sendOp: (msg: HostToRunner) => void) {
     this.userId = userId;
@@ -50,6 +56,31 @@ export class RemoteRunner implements Runner {
     });
   }
 
+  scanAgents(project: Project): Promise<RepoAgentDef[]> {
+    return this.request<RepoAgentDef[]>({ op: 'scan_agents', project }).then((defs) => (Array.isArray(defs) ? defs : []));
+  }
+
+  /** Sends an op that the runner answers with a `runner_reply`. */
+  private request<T>(op: RequestOp, timeoutMs = 30000): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const requestKey = randomUUID();
+      this.requests.set(requestKey, { resolve: resolve as (r: unknown) => void, reject });
+      this.op({ ...op, requestKey } as RunnerOp);
+      setTimeout(() => {
+        if (this.requests.delete(requestKey)) reject(new Error('The teammate\'s runner did not answer in time.'));
+      }, timeoutMs).unref();
+    });
+  }
+
+  /** Called for every runner_reply received from the teammate's machine. */
+  reply(msg: Extract<RunnerMessage, { type: 'runner_reply' }>) {
+    const pending = this.requests.get(msg.requestKey);
+    if (!pending) return;
+    this.requests.delete(msg.requestKey);
+    if (msg.ok) pending.resolve(msg.result);
+    else pending.reject(new Error(msg.error ?? 'The runner could not do that.'));
+  }
+
   /** Called for every runner_event received from the teammate's machine. */
   deliver(sessionKey: string, event: RunnerSessionEvent) {
     const cleanup = this.cleanups.get(sessionKey);
@@ -76,5 +107,7 @@ export class RemoteRunner implements Runner {
     this.closing.clear();
     for (const done of this.cleanups.values()) done(false);
     this.cleanups.clear();
+    for (const pending of this.requests.values()) pending.reject(new Error('The teammate\'s runner disconnected.'));
+    this.requests.clear();
   }
 }

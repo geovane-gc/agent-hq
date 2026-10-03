@@ -5,8 +5,8 @@ import '@xterm/xterm/css/xterm.css';
 import { client } from '../api.ts';
 import { Modal } from './Modal.tsx';
 
-/** The boss's private shell, opened from the computer in the boss room. */
-export function BossTerminal({ onClose }: { onClose: () => void }) {
+/** The boss's private shell, opened from the computer in the boss room. `embedded`: inside another window. */
+export function BossTerminal({ onClose, embedded }: { onClose: () => void; embedded?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,10 +46,11 @@ export function BossTerminal({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  return (
-    <Modal title="👑 Boss terminal" onClose={onClose} wide>
+  const body = (
+    <>
       <p className="hint">A real shell on the host machine, visible only to you. It keeps running when you close this window.</p>
       <div className="terminal" ref={host} />
-    </Modal>
+    </>
   );
+  return embedded ? body : <Modal title="👑 Boss terminal" onClose={onClose} wide>{body}</Modal>;
 }

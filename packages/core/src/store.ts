@@ -14,6 +14,7 @@ import type {
   User,
 } from '@agent-hq/protocol';
 import type { Db } from './db.ts';
+import { githubUrl } from './github.ts';
 import { DEFAULT_INTEGRATIONS } from './integrations.ts';
 
 interface EntityKinds {
@@ -53,8 +54,11 @@ const normalize: { [K in Kind]?: (e: any) => EntityKinds[K] } = {
   }),
   building: (b) => ({ color: PALETTE[0], ...b }),
   floor: (f) => ({ desks: 6, ...f, theme: { ...DEFAULT_THEME, ...f.theme } }),
-  project: (p) => ({ remoteUrl: null, ...p }),
+  project: (p) => ({ remoteUrl: null, ...p, githubUrl: p.githubUrl ?? githubUrl(p.remoteUrl) }),
   agent: (a) => ({
+    kind: 'staff',
+    repo: null,
+    accountId: null,
     isManager: false,
     integrations: [],
     live: false,

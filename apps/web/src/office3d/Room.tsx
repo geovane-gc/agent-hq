@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Label } from './Label.tsx';
 import { Model } from './models.tsx';
 import type { FloorTheme, Task } from '@agent-hq/protocol';
-import { fixtures, WALL_HEIGHT, type FloorPlan } from './layout.ts';
+import { fixtures, WALL_HEIGHT, type FloorPlan, type Rect } from './layout.ts';
 import type { Interactable } from './interact.ts';
 import { getCarpetTexture, getFloorTexture, getTilesTexture } from './textures.ts';
 
@@ -29,13 +29,13 @@ function FloorSurface({ plan, theme }: { plan: FloorPlan; theme: FloorTheme }) {
   );
 }
 
-function Wall(props: { from: [number, number]; to: [number, number]; height: number; color: string; thickness?: number }) {
+function Wall(props: { from: [number, number]; to: [number, number]; height: number; color: string; thickness?: number; y?: number }) {
   const [x1, z1] = props.from;
   const [x2, z2] = props.to;
   const len = Math.hypot(x2 - x1, z2 - z1);
   const angle = Math.atan2(z2 - z1, x2 - x1);
   return (
-    <mesh position={[(x1 + x2) / 2, props.height / 2, (z1 + z2) / 2]} rotation={[0, -angle, 0]} castShadow receiveShadow>
+    <mesh position={[(x1 + x2) / 2, (props.y ?? 0) + props.height / 2, (z1 + z2) / 2]} rotation={[0, -angle, 0]} castShadow receiveShadow>
       <boxGeometry args={[len, props.height, props.thickness ?? 0.15]} />
       <meshStandardMaterial color={props.color} roughness={0.95} />
     </mesh>
@@ -49,7 +49,7 @@ function Glass(props: { from: [number, number]; to: [number, number] }) {
   const angle = Math.atan2(z2 - z1, x2 - x1);
   return (
     <group position={[(x1 + x2) / 2, 0, (z1 + z2) / 2]} rotation={[0, -angle, 0]}>
-      <mesh position={[0, 1.25, 0]}>
+      <mesh position={[0, 1.25, 0]} raycast={() => null}>
         <boxGeometry args={[len, 2.5, 0.04]} />
         <meshPhysicalMaterial color="#bfe3ff" transparent opacity={0.22} roughness={0.05} />
       </mesh>
@@ -132,7 +132,7 @@ function Lounge({ position, accent }: { position: [number, number, number]; acce
   );
 }
 
-function BossRoom(props: { plan: FloorPlan; interact: Interactable; cutaway: boolean }) {
+function BossRoom(props: { plan: FloorPlan; interact: Interactable; cutaway: boolean; unread: number }) {
   const b = props.plan.boss;
   const f = fixtures(props.plan);
   const cx = (b.minX + b.maxX) / 2;
@@ -161,7 +161,9 @@ function BossRoom(props: { plan: FloorPlan; interact: Interactable; cutaway: boo
         <Model name="keyboard" position={[0, 0.795, -0.38]} />
         <Model name="boss_chair" position={[0, 0, 0.2]} />
         <Label position={[0, 1.32, -1.05]} center distanceFactor={15} zIndexRange={[10, 0]}>
-          <button className="tag sign boss" onClick={props.interact.action}>👑 Boss terminal</button>
+          <button className="tag sign boss" onClick={props.interact.action}>
+            👑 Boss computer{props.unread ? <span className="mail-badge">📧 {props.unread}</span> : null}
+          </button>
         </Label>
       </group>
       <Plant position={f.bossPlant} scale={1.1} tall />
@@ -203,8 +205,12 @@ export function Room(props: {
   onBoard: () => void;
   onElevator: () => void;
   onTerminal: (() => void) | null;
+  /** Unread reports in your inbox, shown on the boss computer. */
+  unread?: number;
+  /** The balcony outside the front wall, if this floor has one: that stretch of wall is glass. */
+  balcony?: Rect | null;
 }) {
-  const { plan, theme } = props;
+  const { plan, theme, balcony } = props;
   const f = fixtures(plan);
   const sideH = props.cutaway ? CUTAWAY_H : WALL_H;
   const wall = theme.wallColor;
@@ -220,8 +226,8 @@ export function Room(props: {
   }, [plan]);
 
   const terminal: Interactable = props.onTerminal
-    ? { label: 'Boss terminal', action: props.onTerminal }
-    : { label: 'Boss terminal (owner only)', action: () => {} };
+    ? { label: 'Boss computer — inbox', action: props.onTerminal }
+    : { label: 'Boss computer', action: () => {} };
 
   return (
     <group>
@@ -231,7 +237,16 @@ export function Room(props: {
       <Wall from={[plan.minX, plan.minZ]} to={[plan.maxX, plan.minZ]} height={WALL_H} color={wall} />
       <Wall from={[plan.minX, plan.minZ]} to={[plan.minX, plan.maxZ]} height={WALL_H} color={wall} />
       <Wall from={[plan.maxX, plan.minZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
-      <Wall from={[plan.minX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
+      {balcony && !props.cutaway ? (
+        <>
+          <Wall from={[plan.minX, plan.maxZ]} to={[balcony.minX, plan.maxZ]} height={sideH} color={wall} />
+          <Glass from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} />
+          <Wall from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} height={WALL_H - 2.5} color={wall} y={2.5} />
+          <Wall from={[balcony.maxX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
+        </>
+      ) : (
+        <Wall from={[plan.minX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
+      )}
       {/* accent stripe */}
       <mesh position={[(plan.minX + plan.maxX) / 2, 0.9, plan.minZ + 0.08]}>
         <boxGeometry args={[plan.maxX - plan.minX, 0.12, 0.02]} />
@@ -242,7 +257,7 @@ export function Room(props: {
 
       <Whiteboard position={f.whiteboard} tasks={props.tasks} interact={{ label: 'Task board', action: props.onBoard }} />
       <Elevator position={f.elevator} level={props.level} interact={{ label: 'Elevator — next floor', action: props.onElevator }} />
-      <BossRoom plan={plan} interact={terminal} cutaway={props.cutaway} />
+      <BossRoom plan={plan} interact={terminal} cutaway={props.cutaway} unread={props.unread ?? 0} />
 
       {theme.lounge && <Lounge position={f.lounge} accent={theme.accentColor} />}
       {theme.plants && f.plants.map((p, i) => <Plant key={i} position={p.position} scale={p.scale} tall={p.tall} />)}

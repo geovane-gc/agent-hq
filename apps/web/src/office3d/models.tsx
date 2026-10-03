@@ -58,9 +58,38 @@ export type CharacterClip = 'Stand' | 'Walk' | 'SitIdle' | 'SitType' | 'SitWave'
 
 const HAIR_NODES = { short: 'Hair_Short', long: 'Hair_Long', bun: 'Hair_Bun' } as const;
 
+/** The glowing tip of every cigarette; Balcony makes it flicker. */
+export const EMBER_MATERIAL = new THREE.MeshBasicMaterial({ color: '#ff5a1f', toneMapped: false });
+const CIGARETTE_PARTS: Array<[THREE.CylinderGeometry, THREE.Material, number]> = [
+  // geometry along +Y from the lips outwards, material, center along the axis
+  [new THREE.CylinderGeometry(0.0058, 0.0058, 0.022, 8), new THREE.MeshStandardMaterial({ color: '#d08a3c', roughness: 0.8 }), 0.011],
+  [new THREE.CylinderGeometry(0.0055, 0.0055, 0.058, 8), new THREE.MeshStandardMaterial({ color: '#f4f1ea', roughness: 0.9 }), 0.051],
+  [new THREE.CylinderGeometry(0.0056, 0.0056, 0.006, 8), EMBER_MATERIAL, 0.083],
+];
+/** Where the cigarette sits in the character's bind pose (the corner of the mouth), and where it points. */
+const LIPS = new THREE.Vector3(0.028, 1.543, -0.15);
+const CIGARETTE_DIR = new THREE.Vector3(0.12, -0.32, -0.94).normalize();
+
+/** Parents a cigarette to the head bone so it follows the idle animation. */
+function attachCigarette(root: THREE.Object3D) {
+  const head = root.getObjectByName('Head');
+  if (!head) return;
+  root.updateMatrixWorld(true);
+  const prop = new THREE.Group();
+  prop.name = 'Cigarette';
+  for (const [geometry, material, y] of CIGARETTE_PARTS) {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.y = y;
+    prop.add(mesh);
+  }
+  const world = new THREE.Matrix4().compose(LIPS, new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), CIGARETTE_DIR), new THREE.Vector3(1, 1, 1));
+  head.matrixWorld.clone().invert().multiply(world).decompose(prop.position, prop.quaternion, prop.scale);
+  head.add(prop);
+}
+
 /** The rigged Blender character, recolored per agent and driven by named animation clips. */
-export function Character(props: { appearance: Appearance; clip: CharacterClip; phase?: number; outfit?: 'casual' | 'suit' }) {
-  const { appearance, clip, phase = 0, outfit = 'casual' } = props;
+export function Character(props: { appearance: Appearance; clip: CharacterClip; phase?: number; outfit?: 'casual' | 'suit'; holding?: 'cigarette' }) {
+  const { appearance, clip, phase = 0, outfit = 'casual', holding } = props;
   const { scene, animations } = useGLTF(url('character'));
 
   const model = useMemo(() => {
@@ -71,8 +100,9 @@ export function Character(props: { appearance: Appearance; clip: CharacterClip; 
       if (obj) obj.visible = appearance.hairStyle === style;
     }
     c.traverse((o) => { if (o.name.startsWith('Outfit_Suit')) o.visible = outfit === 'suit'; });
+    if (holding === 'cigarette') attachCigarette(c);
     return c;
-  }, [scene, appearance.skin, appearance.hair, appearance.shirt, appearance.hairStyle, outfit]);
+  }, [scene, appearance.skin, appearance.hair, appearance.shirt, appearance.hairStyle, outfit, holding]);
 
   const mixer = useMemo(() => new THREE.AnimationMixer(model), [model]);
   useFrame((_, dt) => mixer.update(Math.min(dt, 0.1)));

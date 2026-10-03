@@ -60,6 +60,7 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'user': return { ...world, users: upsert(world.users, e.user), you: e.user.id === world.you.id ? e.user : world.you };
     case 'presence': return { ...world, presence: [...world.presence.filter((p) => p.userId !== e.presence.userId), e.presence] };
     case 'presence_left': return { ...world, presence: world.presence.filter((p) => p.userId !== e.userId) };
+    case 'mail': return { ...world, mail: upsert(world.mail, e.mail).sort((a, b) => b.createdAt - a.createdAt) };
     default: return world;
   }
 }
@@ -154,6 +155,12 @@ class Client {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
       this.ws.send(JSON.stringify({ type: 'request', id, command, args }));
     });
+  }
+
+  /** Deleting mail has no event (only you see your inbox): drop it locally once the server agreed. */
+  async deleteMail(id: ID) {
+    await this.request('delete_mail', { id });
+    if (this.state.world) this.set({ world: { ...this.state.world, mail: without(this.state.world.mail, id) } });
   }
 
   async loadTranscript(agentId: ID) {

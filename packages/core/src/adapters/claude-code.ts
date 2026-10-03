@@ -111,6 +111,7 @@ class ClaudeCodeSession implements AgentSession {
       '--append-system-prompt', opts.systemPrompt,
     ];
     if (opts.permissionMode === 'bypassPermissions') args.push('--allow-dangerously-skip-permissions');
+    if (opts.agentName) args.push('--agent', opts.agentName);
     if (opts.model) args.push('--model', opts.model);
     if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
     for (const dir of opts.addDirs) args.push('--add-dir', dir);

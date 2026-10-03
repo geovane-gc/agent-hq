@@ -15,6 +15,8 @@ export interface SessionOptions {
   addDirs: string[];
   /** MCP servers to load, as a Claude Code `mcpServers` map. */
   mcpServers: Record<string, unknown>;
+  /** Run as this agent from the project's .claude/agents (`claude --agent <name>`). */
+  agentName: string | null;
   /** First prompt; null opens the session and waits for the user. */
   initialPrompt: string | null;
   /**

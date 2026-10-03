@@ -32,7 +32,7 @@ function TaskCard(props: { task: Task; world: Snapshot; onOpenAgent: (id: ID) =>
             onChange={(e) => e.target.value && run('assign_task', { taskId: task.id, agentId: e.target.value }).catch(() => {})}
           >
             <option value="">{world.settings.dispatchMode === 'auto' ? 'Auto-assign' : 'Assign…'}</option>
-            {world.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {world.agents.filter((a) => a.kind !== 'repo').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         ) : (
           assignee && <span className="muted">{assignee.name}</span>

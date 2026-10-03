@@ -7,7 +7,8 @@ import { client } from '../api.ts';
 import { CameraFly, FirstPersonControls, IsoControls, type CameraMode } from './Controls.tsx';
 import { findInteractable } from './interact.ts';
 import { HtmlLayer, LabelScale } from './Label.tsx';
-import { colliders, fixtures, floorPlan, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
+import { Balcony } from './Balcony.tsx';
+import { balconyLayout, colliders, fixtures, floorPlan, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
 import { Players } from './Players.tsx';
 import { Room } from './Room.tsx';
 import { Workstation } from './Workstation.tsx';
@@ -94,12 +95,17 @@ export function OfficeScene(props: {
   onBoard: () => void;
   onElevator: () => void;
   onTerminal: (() => void) | null;
+  /** Click on a repo agent on the balcony. */
+  onSummon: (agentId: ID) => void;
 }) {
   const { world, floor } = props;
   const plan = useMemo(() => floorPlan(floor.desks), [floor.desks]);
   const fx = useMemo(() => fixtures(plan), [plan]);
   const solid = useMemo(() => colliders(plan, floor.theme), [plan, floor.theme]);
-  const agents = world.agents.filter((a) => a.floorId === floor.id).sort((a, b) => a.createdAt - b.createdAt);
+  const agents = world.agents.filter((a) => a.floorId === floor.id && a.kind !== 'repo').sort((a, b) => a.createdAt - b.createdAt);
+  // Repo agents (.claude/agents of this floor's projects) live on the balcony.
+  const crew = world.agents.filter((a) => a.floorId === floor.id && a.kind === 'repo').sort((a, b) => a.createdAt - b.createdAt);
+  const balcony = useMemo(() => (crew.length ? balconyLayout(plan, crew.length) : null), [plan, crew.length]);
   const projectIds = new Set(world.projects.filter((p) => p.floorId === floor.id).map((p) => p.id));
   const tasks = world.tasks.filter((t) => projectIds.has(t.projectId));
   const canRecruit = world.agents.length < world.settings.maxAgents;
@@ -108,17 +114,24 @@ export function OfficeScene(props: {
   const lockRef = useRef<(() => void) | null>(null);
   const htmlLayer = useRef<HTMLDivElement>(null);
   const span = Math.max(plan.maxX - plan.minX, plan.maxZ - plan.minZ);
+  // Frame the balcony too in the overview.
+  const view = useMemo(() => {
+    const extra = balcony ? balcony.maxZ - plan.maxZ : 0;
+    const center: Vec3 = [plan.center[0], 0, plan.center[2] + extra / 2];
+    return { plan: { ...plan, center }, span: Math.max(plan.maxX - plan.minX, plan.maxZ - plan.minZ + extra) };
+  }, [plan, balcony]);
 
   const focus = useMemo(() => {
     const index = agents.findIndex((a) => a.id === props.focusAgentId);
-    const slot = index >= 0 ? plan.slots[index] : undefined;
+    const hotDesk = crew.find((a) => a.id === props.focusAgentId)?.repo?.deskIndex;
+    const slot = index >= 0 ? plan.slots[index] : hotDesk != null ? balcony?.desks[hotDesk] : undefined;
     if (!slot) return null;
     return {
       eye: new THREE.Vector3(...toWorld(slot.position, slot.rotation, MONITOR_EYE)),
       screen: new THREE.Vector3(...toWorld(slot.position, slot.rotation, MONITOR_SCREEN)),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.focusAgentId, plan, agents.map((a) => a.id).join()]);
+  }, [props.focusAgentId, plan, balcony, agents.map((a) => a.id).join(), crew.map((a) => a.repo?.deskIndex).join()]);
 
   // Tell the other players where you are when you're not walking around.
   useEffect(() => {
@@ -171,7 +184,21 @@ export function OfficeScene(props: {
             onBoard={props.onBoard}
             onElevator={props.onElevator}
             onTerminal={props.onTerminal}
+            unread={world.mail.filter((m) => !m.read).length}
+            balcony={balcony}
           />
+          {balcony && (
+            <Balcony
+              layout={balcony}
+              crew={crew}
+              tasks={world.tasks}
+              accent={floor.theme.accentColor}
+              focusAgentId={props.focusAgentId}
+              gamification={world.settings.gamification}
+              onSummon={props.onSummon}
+              onOpenAgent={props.onOpenAgent}
+            />
+          )}
           {plan.slots.map((slot) => {
             const agent = agents[slot.index] ?? null;
             return (
@@ -195,8 +222,8 @@ export function OfficeScene(props: {
         </Suspense>
         <CameraDirector
           mode={props.mode}
-          plan={plan}
-          span={span}
+          plan={view.plan}
+          span={view.span}
           colliders={solid}
           spawn={fx.spawn}
           focus={focus}

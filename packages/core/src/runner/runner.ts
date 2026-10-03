@@ -1,5 +1,6 @@
 import type { ID, Project, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
 import type { PermissionDecision } from '../adapters/adapter.ts';
+import type { RepoAgentDef } from '../repo-agents.ts';
 
 // A runner executes agent sessions on one user's machine with that user's own
 // Claude Code login. The host's owner uses an in-process LocalRunner; other
@@ -20,4 +21,6 @@ export interface Runner {
   start(start: RunnerStart, onEvent: (e: RunnerSessionEvent) => void): RunnerSession;
   /** Removes the task's worktree if clean. Resolves true when it is gone. */
   cleanup(project: Project, task: Task): Promise<boolean>;
+  /** The agents defined in `.claude/agents` of this machine's checkout of the project. */
+  scanAgents(project: Project): Promise<RepoAgentDef[]>;
 }

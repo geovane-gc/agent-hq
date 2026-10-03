@@ -78,7 +78,8 @@ export function AgentPanel(props: { world: Snapshot; agentId: ID; onClose: () =>
   const running = agent.status === 'working' || agent.status === 'awaiting_approval';
   const mine = agent.ownerId === props.world.you.id;
   const owner = props.world.users.find((u) => u.id === agent.ownerId);
-  const canFire = mine || props.world.you.role === 'owner';
+  // Repo agents come with the repository: they can't be fired.
+  const canFire = agent.kind !== 'repo' && (mine || props.world.you.role === 'owner');
 
   async function send(e: FormEvent) {
     e.preventDefault();

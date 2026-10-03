@@ -92,6 +92,7 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
       let msg: RunnerMessage;
       try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (msg.type === 'runner_event') runner.deliver(msg.sessionKey, msg.event);
+      else if (msg.type === 'runner_reply') runner.reply(msg);
     });
     ws.on('close', () => orchestrator.detachRunner(userId, runner));
   }
@@ -126,7 +127,11 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
   }
 
   const isOwner = (a: Actor) => a.kind === 'user' && a.user.role === 'owner';
-  store.on('event', (event) => broadcast(event, event.type === 'rate_limits' ? (a) => a.kind === 'user' && a.user.id === event.userId : undefined));
+  store.on('event', (event) => {
+    // Meters and mail are private to one player.
+    const to = event.type === 'rate_limits' ? event.userId : event.type === 'mail' ? event.mail.toUserId : null;
+    broadcast(event, to ? (a) => a.kind === 'user' && a.user.id === to : undefined);
+  });
   terminal.on('data', (data) => broadcast({ type: 'terminal_output', data }, isOwner));
   orchestrator.terminals.on('data', (agentId, data) => {
     const msg = JSON.stringify({ type: 'event', event: { type: 'agent_terminal_output', agentId, data } } satisfies ServerMessage);
