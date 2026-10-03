@@ -47,6 +47,7 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `integrations.ts` | Default optional MCP catalog and the Windows `cmd /c` wrapping for npx/uvx |
 | `terminal.ts` | Boss terminal |
 | `offices.ts` | Offices as separate saves (`<data>/offices.json`, one data dir each; a pre-offices install becomes the sandbox save "My office"). Opens one at a time and switches in-process; also answers the host commands (offices, ledger) |
+| `machine-accounts.ts` | The host owner's Claude accounts are machine-wide: records in `<data>/claude-accounts.json`, config dirs in `<data>/claude-accounts`, shown in every office. Teammates' accounts stay in the office database |
 | `economy.ts`, `economy-config.ts` | The ledger: revenue for verified merged work (once per task), token costs as expenses, hiring fees and career-mode gating. Every balance number lives in `economy-config.ts` |
 | `delivery.ts` | Git checks behind revenue: is a task branch merged into the default branch (merge, rebase or squash), and how many lines changed |
 

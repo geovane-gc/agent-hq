@@ -77,9 +77,21 @@ const normalize: { [K in Kind]?: (e: any) => EntityKinds[K] } = {
  * In-memory world state backed by SQLite. Every mutation goes through here so
  * it is persisted and broadcast to all connected clients in one place.
  */
+/** Persists some entities of a kind somewhere else than the office database. */
+export interface ExternalPersistence<T> {
+  owns(entity: T): boolean;
+  save(entity: T): void;
+  delete(id: ID): void;
+}
+
 export class Store extends EventEmitter<{ event: [ServerEvent] }> {
   private readonly db: Db;
   private readonly maps: { [K in Kind]: Map<ID, EntityKinds[K]> };
+  /**
+   * Offices: entities kept outside this office's database, e.g. the host
+   * owner's Claude accounts, which are machine-wide (see machine-accounts.ts).
+   */
+  readonly external: { [K in Kind]?: ExternalPersistence<EntityKinds[K]> } = {};
   settings: Settings;
   /** Subscription meters per user (each player has their own plan). */
   readonly rateLimits = new Map<ID, RateLimits>();
@@ -128,7 +140,9 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
 
   put<K extends Kind>(kind: K, entity: EntityKinds[K]): EntityKinds[K] {
     this.maps[kind].set(entity.id, entity);
-    this.db.putEntity(kind, entity.id, entity);
+    const external = this.external[kind] as ExternalPersistence<EntityKinds[K]> | undefined;
+    if (external?.owns(entity)) external.save(entity);
+    else this.db.putEntity(kind, entity.id, entity);
     if (kind !== 'invite') this.emit('event', { type: kind as PublicKind, [kind]: entity } as unknown as ServerEvent);
     return entity;
   }
@@ -140,8 +154,11 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
   }
 
   remove(kind: 'building' | 'floor' | 'project' | 'agent' | 'task' | 'invite' | 'user' | 'account' | 'takeover', id: ID) {
+    const before = this.maps[kind].get(id);
     this.maps[kind].delete(id);
-    this.db.deleteEntity(kind, id);
+    const external = this.external[kind] as ExternalPersistence<unknown> | undefined;
+    if (before && external?.owns(before)) external.delete(id);
+    else this.db.deleteEntity(kind, id);
     if (kind === 'building' || kind === 'floor' || kind === 'project' || kind === 'agent' || kind === 'task' || kind === 'account' || kind === 'takeover') {
       this.emit('event', { type: `${kind}_removed`, id });
     }
@@ -165,6 +182,16 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
     const next = { ...this.require(kind, id), ...patch };
     this.maps[kind].set(id, next);
     this.emit('event', { type: kind, [kind]: next } as unknown as ServerEvent);
+  }
+
+  /** In memory only, no event: an entity loaded from external persistence. */
+  hydrate<K extends Kind>(kind: K, entity: EntityKinds[K]) {
+    this.maps[kind].set(entity.id, entity);
+  }
+
+  /** Drops an entity from memory only, no event (e.g. moved to external persistence). */
+  forget(kind: Kind, id: ID) {
+    this.maps[kind].delete(id);
   }
 
   broadcast(event: ServerEvent) {

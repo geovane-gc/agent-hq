@@ -7,6 +7,7 @@ import type { AgentAdapter } from './adapters/adapter.ts';
 import type { Config } from './config.ts';
 import { Db } from './db.ts';
 import { Economy } from './economy.ts';
+import { MachineAccounts } from './machine-accounts.ts';
 import { Orchestrator } from './orchestrator.ts';
 import { LocalRunner } from './runner/local.ts';
 import { Store } from './store.ts';
@@ -14,8 +15,9 @@ import type { BossTerminal } from './terminal.ts';
 
 // Offices are separate saves. Each one has its own data dir (database,
 // worktrees, agent notes) under <root>/offices/<dir>, listed in
-// <root>/offices.json. The owner token stays machine-wide in <root>, so the
-// printed link and the desktop app keep working whichever office is open.
+// <root>/offices.json. Machine-wide things stay in <root>: the owner token
+// (so the printed link and the desktop app keep working whichever office is
+// open) and the owner's Claude accounts (see machine-accounts.ts).
 //
 // Installs from before offices kept their data directly in <root>: that
 // becomes the "My office" save, in sandbox mode, without moving any file
@@ -59,6 +61,8 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
   private readonly adapters: AgentAdapter[];
   private readonly terminal: BossTerminal;
   private readonly indexFile: string;
+  /** The owner's Claude accounts, shared by every office on this machine. */
+  private readonly accounts: MachineAccounts;
   private index: IndexFile;
   /** Serializes open/close. */
   private switching: Promise<unknown> = Promise.resolve();
@@ -69,6 +73,7 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
     this.adapters = adapters;
     this.terminal = terminal;
     this.indexFile = path.join(config.rootDir, 'offices.json');
+    this.accounts = new MachineAccounts(config.rootDir);
     this.index = this.load();
   }
 
@@ -157,9 +162,12 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
     const economy = new Economy(db, store, officeInfo);
     orchestrator.economy = economy;
     const owner = orchestrator.ensureOwner();
+    this.accounts.attach(store, db, owner.id);
     orchestrator.boot(new LocalRunner({
       userId: owner.id,
       dataDir,
+      // Claude account dirs are machine-wide (<root>/claude-accounts); worktrees and notes stay per office.
+      accountsRoot: this.config.rootDir,
       adapters: this.adapters,
       remote: false,
       hqUrl: `ws://127.0.0.1:${config.port}`,
