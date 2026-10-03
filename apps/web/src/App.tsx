@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import type { ID, Snapshot } from '@agent-hq/protocol';
+import type { ID } from '@agent-hq/protocol';
 import { useClient } from './api.ts';
 import { AgentPanel } from './components/AgentPanel.tsx';
 import { AgentTerminal } from './components/AgentTerminal.tsx';
 import { Board } from './components/Board.tsx';
+import { Avatars, FloorPicker, MainMenu, Notifications, StatusCard, type MenuItem } from './components/Hud.tsx';
 import { AgentModal, BuildingModal, FloorModal, NewFloorModal, NewProjectModal, NewTaskModal } from './components/forms.tsx';
 import { Modal } from './components/Modal.tsx';
 import { SettingsModal } from './components/Settings.tsx';
 import { BossTerminal } from './components/Terminal.tsx';
-import { RateMeters, UsageModal } from './components/Usage.tsx';
+import { UsageModal } from './components/Usage.tsx';
+import { floorLabel } from './format.ts';
 import { CampusScene } from './office3d/CampusScene.tsx';
 import type { CameraMode } from './office3d/Controls.tsx';
 import { OfficeScene } from './office3d/OfficeScene.tsx';
@@ -26,70 +28,11 @@ type Overlay =
   | { kind: 'settings'; tab?: 'general' | 'integrations' | 'team' }
   | null;
 
-const BUILDING_ICON = { web: '🌐', desktop: '🖥️', game: '🎮', custom: '🏢' } as const;
-
 function remember<T extends string>(key: string, fallback: T): T {
   try { return (localStorage.getItem(key) as T) || fallback; } catch { return fallback; }
 }
 function store(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch {}
-}
-
-function Toasts() {
-  const [msgs, setMsgs] = useState<Array<{ id: number; text: string }>>([]);
-  useEffect(() => {
-    const on = (e: Event) => {
-      const id = Date.now() + Math.random();
-      setMsgs((m) => [...m, { id, text: String((e as CustomEvent).detail) }]);
-      setTimeout(() => setMsgs((m) => m.filter((x) => x.id !== id)), 6000);
-    };
-    window.addEventListener('hq-error', on);
-    return () => window.removeEventListener('hq-error', on);
-  }, []);
-  return <div className="toasts">{msgs.map((m) => <div key={m.id} className="toast">{m.text}</div>)}</div>;
-}
-
-/** Hands up across the whole company, so approvals are never missed. */
-function ApprovalAlerts({ world, onOpen }: { world: Snapshot; onOpen: (agentId: ID) => void }) {
-  const waiting = world.agents.filter((a) => a.status === 'awaiting_approval' && a.ownerId === world.you.id);
-  if (!waiting.length) return null;
-  return (
-    <div className="alerts">
-      {waiting.map((a) => (
-        <button key={a.id} className="alert" onClick={() => onOpen(a.id)}>
-          <span className="bounce">✋</span> {a.name} needs your approval
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Directory(props: { world: Snapshot; floorId: ID | null; onFloor: (id: ID) => void; open: (o: Overlay) => void; owner: boolean }) {
-  const { world } = props;
-  return (
-    <nav className="directory">
-      {world.buildings.map((b) => (
-        <div key={b.id} className="building">
-          <div className="building-name">
-            <span className="dot" style={{ background: b.color }} /> {BUILDING_ICON[b.kind]} {b.name}
-            {props.owner && <button className="link small" onClick={() => props.open({ kind: 'building', id: b.id })}>edit</button>}
-          </div>
-          {world.floors.filter((f) => f.buildingId === b.id).sort((x, y) => y.level - x.level).map((f) => {
-            const agents = world.agents.filter((a) => a.floorId === f.id);
-            const waiting = agents.some((a) => a.status === 'awaiting_approval');
-            const busy = agents.filter((a) => a.status === 'working').length;
-            return (
-              <button key={f.id} className={`floor ${f.id === props.floorId ? 'active' : ''}`} onClick={() => props.onFloor(f.id)}>
-                <span>{f.level}F · {f.name}</span>
-                <span className="muted">{waiting ? '✋ ' : ''}{busy}/{agents.length}</span>
-              </button>
-            );
-          })}
-          {props.owner && <button className="link small" onClick={() => props.open({ kind: 'new-floor', buildingId: b.id })}>+ floor</button>}
-        </div>
-      ))}
-    </nav>
-  );
 }
 
 export function App() {
@@ -104,7 +47,9 @@ export function App() {
   /** History & settings side panel. */
   const [agentId, setAgentId] = useState<ID | null>(null);
   const [overlay, setOverlay] = useState<Overlay>(null);
-  const [directory, setDirectory] = useState(true);
+  /** Floor picker (from the status card) and main menu popovers. */
+  const [picker, setPicker] = useState(false);
+  const [menu, setMenu] = useState(false);
 
   useEffect(() => store('hq-view', view), [view]);
   useEffect(() => store('hq-camera', mode), [mode]);
@@ -121,7 +66,13 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       // Esc inside an agent's terminal belongs to Claude Code.
       const inTerminal = !!(e.target as HTMLElement | null)?.closest?.('.xterm');
-      if (e.key === 'Escape' && !document.pointerLockElement && !inTerminal) { setOverlay(null); }
+      if (e.key === 'Escape' && !document.pointerLockElement && !inTerminal) { setOverlay(null); setMenu(false); setPicker(false); }
+      // M opens the menu, unless the player is typing, in a dialog or walking with the mouse captured.
+      const busy = !!(e.target as HTMLElement | null)?.closest?.('input, textarea, select, .xterm, [role="dialog"]');
+      if (e.key.toLowerCase() === 'm' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !busy && !document.pointerLockElement && !document.querySelector('.modal-backdrop, .monitor-overlay')) {
+        setPicker(false);
+        setMenu((open) => !open);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -136,6 +87,7 @@ export function App() {
   const floor = world.floors.find((f) => f.id === floorId);
   const building = world.buildings.find((b) => b.id === floor?.buildingId);
   const projects = world.projects.filter((p) => p.floorId === floorId);
+  const floorAgents = world.agents.filter((a) => a.floorId === floorId);
   const projectIds = projects.map((p) => p.id);
   const openTasks = world.tasks.filter((t) => projectIds.includes(t.projectId) && t.status !== 'done').length;
   const close = () => setOverlay(null);
@@ -173,6 +125,26 @@ export function App() {
     closeTerminal();
   };
 
+  const officeItems: MenuItem[] = view === 'office' && floor ? [
+    { icon: '📋', label: 'Task board', hint: openTasks ? `${openTasks} open on this floor` : 'Plan work for this floor', badge: openTasks > 0 && <span className="count-badge">{openTasks}</span>, onSelect: () => setOverlay({ kind: 'board' }) },
+    { icon: '🧑‍💻', label: 'Recruit an agent', hint: `${floorAgents.length} of ${floor.desks} desks taken`, onSelect: () => setOverlay({ kind: 'hire' }) },
+    ...(owner ? [
+      { icon: '📁', label: 'Add a project', hint: projects.length ? projects.map((p) => p.name).join(', ') : 'A git repository for this floor', onSelect: () => setOverlay({ kind: 'project' }) },
+      { icon: '🎨', label: 'Customize floor', hint: 'Desks, floor and wall colors', onSelect: () => setOverlay({ kind: 'floor' }) },
+    ] : []),
+  ] : view === 'campus' && owner ? [
+    { icon: '🏗️', label: 'New building', hint: 'A studio for another kind of work', onSelect: () => setOverlay({ kind: 'building' }) },
+  ] : [];
+  const menuGroups: MenuItem[][] = [
+    officeItems,
+    [
+      { icon: '📊', label: 'Usage', hint: 'Tokens and cost per agent and project', onSelect: () => setOverlay({ kind: 'usage' }) },
+      { icon: '👥', label: 'Team', hint: 'Players and invites', badge: <Avatars world={world} />, onSelect: () => setOverlay({ kind: 'settings', tab: 'team' }) },
+      ...(world.terminalAvailable ? [{ icon: '👑', label: 'Boss terminal', hint: 'Your private shell', onSelect: () => setOverlay({ kind: 'terminal' }) }] : []),
+      { icon: '⚙️', label: 'Settings', onSelect: () => setOverlay({ kind: 'settings' }) },
+    ],
+  ];
+
   return (
     <div className="app">
       {view === 'campus' ? (
@@ -199,50 +171,49 @@ export function App() {
       )}
 
       {/* ---------------- HUD */}
-      <header className="hud-top">
-        <h1>🏢 Agent HQ</h1>
-        <div className="seg">
-          <button className={view === 'campus' ? 'active' : ''} onClick={() => { closeTerminal(); setView('campus'); }}>Campus</button>
-          <button className={view === 'office' ? 'active' : ''} onClick={() => setView('office')}>Office</button>
-        </div>
-        {view === 'office' && (
-          <div className="seg">
-            <button className={mode === 'iso' ? 'active' : ''} onClick={() => { closeTerminal(); setMode('iso'); }} title="Overview camera">🗺️ Overview</button>
-            <button className={mode === 'first' ? 'active' : ''} onClick={() => { closeTerminal(); setMode('first'); }} title="Walk around in first person">🚶 Walk</button>
-          </div>
-        )}
-        {connection !== 'open' && <span className="pill status-error">Reconnecting…</span>}
-        <span className="spacer" />
-        <RateMeters limits={world.rateLimits} />
-        <div className="people-dots" title="Players">
-          {world.users.filter((u) => u.online).map((u) => <span key={u.id} className="dot" style={{ background: u.color }} title={u.name} />)}
-        </div>
-        <button className="ghost" onClick={() => setOverlay({ kind: 'usage' })}>📊 Usage</button>
-        <button className="ghost" onClick={() => setOverlay({ kind: 'settings', tab: 'team' })}>👥 Team</button>
-        <button className="ghost" onClick={() => setOverlay({ kind: 'settings' })}>⚙️</button>
-      </header>
-
-      {view === 'office' && floor && !focusAgentId && (
-        <div className="hud-floor">
-          <button className="ghost small" onClick={() => setDirectory(!directory)} title="Building directory">🛗</button>
-          <div>
-            <div className="muted small-text">{building?.name}</div>
-            <h2>{floor.level}F · {floor.name}</h2>
-          </div>
-          <div className="projects">
-            {projects.map((p) => <span key={p.id} className="chip" title={p.repoPath}>{p.git ? '⎇ ' : ''}{p.name}</span>)}
-            {owner && <button className="small ghost" onClick={() => setOverlay({ kind: 'project' })}>+ Project</button>}
-          </div>
-          <button onClick={() => setOverlay({ kind: 'board' })}>📋 Board{openTasks ? ` (${openTasks})` : ''}</button>
-          {owner && <button className="ghost" onClick={() => setOverlay({ kind: 'floor' })}>🎨 Customize</button>}
-        </div>
+      {!focusAgentId && (
+        <StatusCard
+          world={world}
+          floor={view === 'office' ? floor : undefined}
+          building={view === 'office' ? building : undefined}
+          agents={view === 'office' ? floorAgents : world.agents}
+          reconnecting={connection !== 'open'}
+          pickerOpen={picker}
+          onPicker={view === 'office' ? () => { setMenu(false); setPicker(!picker); } : null}
+        />
+      )}
+      {picker && view === 'office' && !focusAgentId && (
+        <>
+          <div className="click-away" onMouseDown={() => setPicker(false)} />
+          <FloorPicker
+            world={world}
+            floorId={floorId}
+            owner={owner}
+            onFloor={(id) => { setFloorId(id); setAgentId(null); closeTerminal(); setPicker(false); }}
+            onEditBuilding={(id) => { setPicker(false); setOverlay({ kind: 'building', id }); }}
+            onNewFloor={(buildingId) => { setPicker(false); setOverlay({ kind: 'new-floor', buildingId }); }}
+          />
+        </>
       )}
 
-      {view === 'office' && directory && mode === 'iso' && !focusAgentId && (
-        <Directory world={world} floorId={floorId} onFloor={(id) => { setFloorId(id); setAgentId(null); closeTerminal(); }} open={setOverlay} owner={owner} />
+      <div className="hud-corner">
+        <div className="seg icons" role="group" aria-label="View">
+          <button className={view === 'campus' ? 'active' : ''} aria-pressed={view === 'campus'} onClick={() => { closeTerminal(); setView('campus'); }} title="Campus: every building">🏙️</button>
+          <button className={view === 'office' && mode === 'iso' ? 'active' : ''} aria-pressed={view === 'office' && mode === 'iso'} onClick={() => { closeTerminal(); setView('office'); setMode('iso'); }} title="Office overview: drag to rotate, wheel to zoom">🗺️</button>
+          <button className={view === 'office' && mode === 'first' ? 'active' : ''} aria-pressed={view === 'office' && mode === 'first'} onClick={() => { closeTerminal(); setView('office'); setMode('first'); }} title="Walk around in first person (WASD)">🚶</button>
+        </div>
+        <button className={`menu-btn ${menu ? 'open' : ''}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => { setPicker(false); setMenu(!menu); }} title="Menu (M)">
+          <span aria-hidden>☰</span> Menu
+        </button>
+      </div>
+      {menu && (
+        <>
+          <div className="click-away" onMouseDown={() => setMenu(false)} />
+          <MainMenu groups={menuGroups} onClose={() => setMenu(false)} />
+        </>
       )}
 
-      <ApprovalAlerts world={world} onOpen={openAgent} />
+      <Notifications world={world} onOpenAgent={openAgent} onBoard={() => { setView('office'); setOverlay({ kind: 'board' }); }} />
 
       {terminalAgentId && view === 'office' && (
         <AgentTerminal
@@ -260,8 +231,14 @@ export function App() {
 
       {/* ---------------- overlays */}
       {overlay?.kind === 'board' && (
-        <Modal title={`📋 Board — ${floor?.name ?? ''}`} onClose={close} wide>
-          <Board world={world} projectIds={projectIds} onNewTask={() => newTask(true)} onOpenAgent={(id) => { close(); openAgent(id); }} />
+        <Modal title="📋 Task board" subtitle={floor && `${floorLabel(floor.level)} · ${floor.name}${building ? ` · ${building.name}` : ''}`} onClose={close} wide>
+          <Board
+            world={world}
+            projectIds={projectIds}
+            onNewTask={() => newTask(true)}
+            onNewProject={owner ? () => setOverlay({ kind: 'project' }) : null}
+            onOpenAgent={(id) => { close(); openAgent(id); }}
+          />
         </Modal>
       )}
       {overlay?.kind === 'hire' && floor && <AgentModal world={world} floorId={floor.id} onClose={close} />}
@@ -280,7 +257,6 @@ export function App() {
       {overlay?.kind === 'terminal' && <BossTerminal onClose={close} />}
       {overlay?.kind === 'usage' && <UsageModal onClose={close} />}
       {overlay?.kind === 'settings' && <SettingsModal world={world} initial={overlay.tab} onClose={close} />}
-      <Toasts />
     </div>
   );
 }

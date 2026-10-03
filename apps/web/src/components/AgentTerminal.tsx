@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { ID, Snapshot } from '@agent-hq/protocol';
-import { level, STATUS_LABEL } from '../agentUtil.ts';
+import { COORDINATOR, level, STATUS_ICON, STATUS_LABEL } from '../agentUtil.ts';
 import { client, run } from '../api.ts';
 import { AccountBadge, AccountsModal, AccountSwitcher, TakeOverModal } from './Accounts.tsx';
 
@@ -97,10 +97,10 @@ export function AgentTerminal(props: {
         <header className="monitor-bar">
           <button className="ghost small" onClick={props.onClose} title="Back to the office (Alt+Q)">← Office</button>
           <div className="monitor-title">
-            <strong>{agent.name}</strong>{agent.isManager ? ' ★' : ''}
-            <span className="muted"> · {agent.role}{props.world.settings.gamification ? ` · Lv ${level(agent.xp)}` : ''}</span>
-            <span className={`pill status-${agent.status}`}>{STATUS_LABEL[agent.status]}</span>
-            {task && <span className="muted small-text"> · {task.title}{task.branch ? ` (${task.branch})` : ''}</span>}
+            <strong>{agent.name}</strong>{agent.isManager && <span className="badge" title={COORDINATOR.help}>★ {COORDINATOR.label}</span>}
+            <span className="muted">{agent.role}{props.world.settings.gamification ? ` · Lv ${level(agent.xp)}` : ''}</span>
+            <span className={`pill status-${agent.status}`}>{STATUS_ICON[agent.status]} {STATUS_LABEL[agent.status]}</span>
+            {task && <span className="monitor-task">📋 {task.title}{task.branch && <code className="branch" title={`Branch ${task.branch}`}>{task.branch}</code>}</span>}
           </div>
           <AccountBadge world={props.world} agent={agent} />
           {mine
@@ -127,8 +127,8 @@ export function AgentTerminal(props: {
         <div className="monitor-screen" ref={host} />
         <footer className="monitor-foot muted small-text">
           {canType
-            ? <>Type to talk to {agent.name} — this is the real Claude Code session. Esc interrupts · Alt+Q goes back to the office.</>
-            : <>Read-only view of {agent.name}'s Claude Code session · Alt+Q goes back to the office.</>}
+            ? <>Type to talk to {agent.name}: this is the real Claude Code session. <kbd>Esc</kbd> interrupts · <kbd>Alt</kbd>+<kbd>Q</kbd> back to the office</>
+            : <>Read-only view of {agent.name}'s Claude Code session · <kbd>Alt</kbd>+<kbd>Q</kbd> back to the office</>}
         </footer>
       </div>
       {dialog === 'take-over' && <TakeOverModal world={props.world} agent={agent} onClose={() => setDialog(null)} />}
