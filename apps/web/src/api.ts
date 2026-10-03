@@ -90,6 +90,12 @@ class Client {
   readonly accountLogins = new EventTarget();
   /** Everything a login terminal printed, so reopening it shows the whole flow. */
   readonly loginHistory = new Map<ID, string>();
+  /**
+   * Whiteboard events (the event type is the ServerEvent's type), plus
+   * 'snapshot' on every (re)connection. Whiteboards keep their own store
+   * (whiteboards.ts) so cursors and strokes don't re-render the whole app.
+   */
+  readonly whiteboards = new EventTarget();
 
   constructor() {
     this.connect();
@@ -136,13 +142,16 @@ class Client {
     if (msg.type === 'snapshot') {
       // Transcripts may have moved on while disconnected; refetch lazily.
       this.set({ connection: 'open', world: msg.snapshot, transcripts: {}, lobby: null });
+      this.whiteboards.dispatchEvent(new Event('snapshot'));
     } else if (msg.type === 'lobby') {
       this.set({ connection: 'open', world: null, transcripts: {}, lobby: msg.offices });
     } else if (msg.type === 'event') {
       const e = msg.event;
       // Tycoon: lets the finance UI celebrate revenue (see components/Finance.tsx).
       if (e.type === 'ledger') window.dispatchEvent(new CustomEvent('hq-ledger', { detail: e.entry }));
-      if (e.type === 'transcript') {
+      if (e.type.startsWith('whiteboard')) {
+        this.whiteboards.dispatchEvent(new CustomEvent(e.type, { detail: e }));
+      } else if (e.type === 'transcript') {
         const list = this.state.transcripts[e.entry.agentId];
         if (list) this.set({ transcripts: { ...this.state.transcripts, [e.entry.agentId]: [...list, e.entry] } });
       } else if (e.type === 'terminal_output') {

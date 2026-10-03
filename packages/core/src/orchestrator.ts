@@ -22,6 +22,7 @@ import type {
   Task,
   TranscriptEntry,
   User,
+  WhiteboardCommandName,
 } from '@agent-hq/protocol';
 import { ACCOUNTS_DIR } from './accounts.ts';
 import type { Config } from './config.ts';
@@ -575,9 +576,9 @@ export class Orchestrator {
     return this.store.require('agent', agentId);
   }
 
-  /** Host commands (offices, economy) are handled by OfficeHost, not here. */
+  /** Host commands (offices, economy) are handled by OfficeHost, whiteboards by Whiteboards (both routed by the server), not here. */
   private readonly handlers: {
-    [K in Exclude<CommandName, HostCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
+    [K in Exclude<CommandName, HostCommandName | WhiteboardCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
   } = {
     // ---- world
     create_building: ({ name, kind, color }) => {

@@ -24,7 +24,9 @@
     "models": "blender --background --factory-startup --python assets/blender/build_assets.py -- --out apps/web/public/models"
   },
   "overrides": {
-    "rollup": "npm:@rollup/wasm-node@^4.50.0"
+    "rollup": "npm:@rollup/wasm-node@^4.50.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

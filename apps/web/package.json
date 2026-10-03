@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@agent-hq/protocol": "0.1.0",
+    "@excalidraw/excalidraw": "^0.18.1",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.1",
     "@xterm/addon-fit": "^0.11.0",

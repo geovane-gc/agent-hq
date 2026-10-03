@@ -12,6 +12,7 @@ import { Orchestrator } from './orchestrator.ts';
 import { LocalRunner } from './runner/local.ts';
 import { Store } from './store.ts';
 import type { BossTerminal } from './terminal.ts';
+import { Whiteboards } from './whiteboards.ts';
 
 // Offices are separate saves. Each one has its own data dir (database,
 // worktrees, agent notes) under <root>/offices/<dir>, listed in
@@ -44,6 +45,8 @@ export interface OpenOffice {
   store: Store;
   orchestrator: Orchestrator;
   economy: Economy;
+  /** Drawing boards (see whiteboards.ts); their commands are routed by the server. */
+  whiteboards: Whiteboards;
 }
 
 export const HOST_COMMANDS = new Set<string>(['list_offices', 'create_office', 'open_office', 'get_ledger', 'check_deliveries'] satisfies HostCommandName[]);
@@ -174,7 +177,8 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
       resolveRepo: async (project) => ({ repoPath: project.repoPath, git: project.git }),
     }));
     economy.start();
-    this.current = { info: officeInfo, dataDir, db, store, orchestrator, economy };
+    const whiteboards = new Whiteboards(db, store);
+    this.current = { info: officeInfo, dataDir, db, store, orchestrator, economy, whiteboards };
     this.emit('opened', this.current);
     return officeInfo;
   }
@@ -190,6 +194,7 @@ export class OfficeHost extends EventEmitter<{ opened: [OpenOffice]; closed: [Op
     if (!office) return;
     this.current = null;
     office.economy.stop();
+    office.whiteboards.flush();
     this.emit('closed', office);
     // Let agent processes exit cleanly, but never hang the switch. The old
     // database stays open: late session events may still write to it.

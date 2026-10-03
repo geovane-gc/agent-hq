@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import { HOST_COMMANDS, type OfficeHost, type OpenOffice } from './offices.ts';
 import type { Actor, Orchestrator } from './orchestrator.ts';
 import type { Store } from './store.ts';
 import type { BossTerminal } from './terminal.ts';
+import { WHITEBOARD_COMMANDS, type WhiteboardPeer, type Whiteboards } from './whiteboards.ts';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -42,11 +44,14 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
   // connection is dropped then and clients reconnect to the new one.
   let store!: Store;
   let orchestrator!: Orchestrator;
+  let whiteboards!: Whiteboards;
   const http = createServer(serveStatic);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
   const clients = new Map<WebSocket, Actor>();
   /** Which agent terminals each client has open. */
   const watching = new Map<WebSocket, Set<string>>();
+  /** Players' connections as whiteboard viewers (cursors and element changes are sent per connection). */
+  const peers = new Map<WebSocket, WhiteboardPeer>();
 
   function unwatch(ws: WebSocket, agentId: string) {
     if (watching.get(ws)?.delete(agentId)) orchestrator.watch(agentId, -1);
@@ -80,10 +85,15 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
       send(ws, { type: 'snapshot', snapshot: orchestrator.snapshot(actor) });
       ws.on('message', (raw) => onMessage(ws, actor, raw.toString()));
       const office = orchestrator; // the connection belongs to the office open when it was made
+      const boards = whiteboards;
+      if (actor.kind === 'user') peers.set(ws, { id: randomUUID(), user: actor.user, send: (event) => send(ws, { type: 'event', event }) });
       ws.on('close', () => {
         for (const agentId of watching.get(ws) ?? []) office.watch(agentId, -1);
         watching.delete(ws);
         clients.delete(ws);
+        const peer = peers.get(ws);
+        peers.delete(ws);
+        if (peer) boards.leave(peer);
         if (actor.kind === 'user') office.disconnected(actor.user.id);
       });
     });
@@ -149,6 +159,17 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
       if (actor.kind !== 'user') return send(ws, { type: 'reply', id: req.id, ok: false, error: 'Not available to agents' });
       return runHostCommand(ws, req, actor.user.role === 'owner');
     }
+    if (WHITEBOARD_COMMANDS.has(req.command)) {
+      const peer = peers.get(ws);
+      if (!peer) return send(ws, { type: 'reply', id: req.id, ok: false, error: 'Not available to agents' });
+      try {
+        const result = await whiteboards.handle(req.command as never, req.args as never, peer);
+        send(ws, { type: 'reply', id: req.id, ok: true, result: result ?? null });
+      } catch (err) {
+        send(ws, { type: 'reply', id: req.id, ok: false, error: (err as Error).message });
+      }
+      return;
+    }
     try {
       const result = await orchestrator.handle(req.command, req.args, actor);
       if (req.command === 'agent_terminal_open') {
@@ -188,7 +209,7 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
   // ---- offices: wire the open office; drop every connection when it changes.
   const lobby = new Set<WebSocket>();
   const wire = (office: OpenOffice) => {
-    ({ store, orchestrator } = office);
+    ({ store, orchestrator, whiteboards } = office);
     store.on('event', onStoreEvent);
     orchestrator.terminals.on('data', onAgentTerminal);
     orchestrator.userEvents.on('event', onUserEvent);

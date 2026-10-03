@@ -1,0 +1,40 @@
+/* Whiteboards: the list and the full-screen editor (components/Whiteboards.tsx). */
+
+.wb-overlay {
+  position: fixed; inset: 0; z-index: 20;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  animation: fade-in 0.15s ease-out;
+}
+.wb-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; min-height: 44px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.wb-bar .spacer, .wb-card .spacer { flex: 1; }
+.wb-switch { max-width: 260px; font-weight: 600; }
+.wb-canvas { position: relative; flex: 1; min-height: 0; }
+.wb-canvas > .excalidraw { position: absolute; inset: 0; }
+.wb-loading { display: grid; place-items: center; height: 100%; color: var(--muted); }
+
+.wb-viewers { display: inline-flex; }
+.wb-avatar {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; margin-left: -6px;
+  border-radius: 50%; border: 2px solid var(--surface); color: #fff; font-size: 11px; font-weight: 700;
+}
+.wb-avatar:first-child { margin-left: 0; }
+
+.wb-new { margin-bottom: 14px; }
+.wb-new input { flex: 1; }
+.wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.wb-card {
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.wb-thumb {
+  display: grid; place-items: center; height: 150px; padding: 8px; overflow: hidden;
+  background: #ffffff; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; cursor: pointer;
+}
+.wb-thumb img { max-width: 100%; max-height: 134px; object-fit: contain; }
+.wb-card-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.wb-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

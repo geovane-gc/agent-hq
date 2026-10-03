@@ -14,6 +14,8 @@ import { openFinances } from './components/Finance.tsx';
 import { StartScreen, TycoonLayer, openStartScreen } from './components/StartScreen.tsx';
 import { SummonModal } from './components/SummonModal.tsx';
 import { UsageModal } from './components/Usage.tsx';
+import { WhiteboardLayer } from './components/Whiteboards.tsx';
+import { openWhiteboards } from './whiteboards.ts';
 import { floorLabel } from './format.ts';
 import { CampusScene } from './office3d/CampusScene.tsx';
 import type { CameraMode } from './office3d/Controls.tsx';
@@ -151,6 +153,7 @@ export function App() {
         icon: '📧', label: 'Inbox', hint: unread ? `${unread} unread report${unread > 1 ? 's' : ''}` : 'Reports from the balcony crew',
         badge: unread > 0 && <span className="count-badge">{unread}</span>, onSelect: () => setOverlay({ kind: 'computer' }),
       },
+      { icon: '🖍️', label: 'Whiteboards', hint: 'Draw together; boards stay in the office', onSelect: openWhiteboards },
       ...(world.economy ? [{ icon: '💼', label: 'Finances', hint: 'Cash, profit and the ledger', onSelect: openFinances }] : []),
       { icon: '📊', label: 'Usage', hint: 'Tokens and cost per agent and project', onSelect: () => setOverlay({ kind: 'usage' }) },
       { icon: '👥', label: 'Team', hint: 'Players and invites', badge: <Avatars world={world} />, onSelect: () => setOverlay({ kind: 'settings', tab: 'team' }) },
@@ -281,6 +284,7 @@ export function App() {
       {overlay?.kind === 'usage' && <UsageModal onClose={close} />}
       {overlay?.kind === 'settings' && <SettingsModal world={world} initial={overlay.tab} onClose={close} />}
       <TycoonLayer world={world} />
+      <WhiteboardLayer world={world} floorId={view === 'office' ? floorId : null} />
     </div>
   );
 }
