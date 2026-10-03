@@ -8,7 +8,44 @@ export type ID = string;
 
 // ---------------------------------------------------------------- people
 
+/** owner: the boss (owns the building). member: shown as "Manager" in the UI. */
 export type UserRole = 'owner' | 'member';
+
+/**
+ * A Claude login on a player's machine. Each player may connect several;
+ * agents run on one of their owner's accounts. Only metadata travels over
+ * the wire: credentials stay inside Claude Code on that machine.
+ */
+export interface ClaudeAccount {
+  id: ID;
+  userId: ID;
+  label: string;
+  /** Claude Code config dir for this login; null = the machine's default login. */
+  configDir: string | null;
+  email: string | null;
+  /** e.g. "pro", "max" (from `claude auth status`). */
+  plan: string | null;
+  loggedIn: boolean;
+  checkedAt: number;
+}
+
+/**
+ * A report an agent delivered to a player's inbox (shown as e-mail on the
+ * boss computer). Replying continues the conversation with that agent.
+ */
+export interface Mail {
+  id: ID;
+  /** Recipient: the player who invoked the agent. */
+  toUserId: ID;
+  fromAgentId: ID;
+  subject: string;
+  /** Markdown: the agent's final message for that run. */
+  body: string;
+  read: boolean;
+  /** Earlier mail in the same conversation, if this is a follow-up. */
+  inReplyTo: ID | null;
+  createdAt: number;
+}
 
 export interface User {
   id: ID;
@@ -82,6 +119,8 @@ export interface Project {
   floorId: ID;
   /** True when repoPath is a git repo with at least one commit; enables worktrees. */
   git: boolean;
+  /** https://github.com/<owner>/<repo>; required for new projects (null on legacy ones). */
+  githubUrl: string | null;
   createdAt: number;
 }
 
@@ -102,8 +141,34 @@ export interface Appearance {
   hairStyle: 'short' | 'long' | 'bun' | 'bald';
 }
 
+/** staff: hired by a player, has a desk. repo: defined in the project's .claude/agents, lives on the balcony. */
+export type AgentKind = 'staff' | 'repo';
+
+/** Where a repo agent is right now (drives its 3D behaviour). */
+export type RepoAgentLocation = 'balcony' | 'to_desk' | 'desk' | 'to_balcony';
+
+export interface RepoAgentInfo {
+  projectId: ID;
+  /** Name passed to `claude --agent` (the file name in .claude/agents without .md). */
+  agentName: string;
+  description: string;
+  /** No edit/write tools in its definition: runs directly in the repo instead of a worktree. */
+  readOnly: boolean;
+  location: RepoAgentLocation;
+  /** Hot desk index while working (null on the balcony). */
+  deskIndex: number | null;
+  /** Player who invoked the current run; reports go to their inbox. */
+  invokedBy: ID | null;
+}
+
 export interface Agent {
   id: ID;
+  /** Defaults to 'staff'. Repo agents can't be fired and only work when invoked. */
+  kind: AgentKind;
+  /** Set when kind === 'repo'. */
+  repo: RepoAgentInfo | null;
+  /** Claude account this agent runs on (one of ownerId's accounts); null = owner's default login. */
+  accountId: ID | null;
   name: string;
   role: string;
   adapter: AgentAdapterKind;
@@ -234,6 +299,10 @@ export interface Settings {
 export interface Snapshot {
   you: User;
   users: User[];
+  /** Everyone's connected Claude accounts (metadata only). */
+  accounts: ClaudeAccount[];
+  /** Your inbox only. */
+  mail: Mail[];
   buildings: Building[];
   floors: Floor[];
   projects: Project[];
@@ -266,6 +335,12 @@ export type ServerEvent =
   | { type: 'settings'; settings: Settings }
   | { type: 'rate_limits'; userId: ID; rateLimits: RateLimits }
   | { type: 'user'; user: User }
+  | { type: 'account'; account: ClaudeAccount }
+  | { type: 'account_removed'; id: ID }
+  /** Sent only to the recipient. */
+  | { type: 'mail'; mail: Mail }
+  /** Output of an account login terminal (`claude auth login`), sent to the account's owner. */
+  | { type: 'account_login_output'; accountId: ID; data: string }
   | { type: 'presence'; presence: Presence }
   | { type: 'presence_left'; userId: ID }
   | { type: 'terminal_output'; data: string }
@@ -284,10 +359,28 @@ export interface Commands {
   create_floor: { args: { buildingId: ID; name: string }; result: Floor };
   update_floor: { args: { id: ID; patch: Partial<Pick<Floor, 'name' | 'desks' | 'theme'>> }; result: Floor };
   remove_floor: { args: { id: ID }; result: null };
+  /**
+   * The folder must be a git repo whose origin is on GitHub, unless
+   * `createGithubRepo` is set: then the host creates that GitHub repo
+   * (needs a GitHub token, see set_github_token), adds it as origin and pushes.
+   */
   create_project: {
-    args: { name: string; repoPath: string; floorId: ID; initGit?: boolean };
+    args: {
+      name: string;
+      repoPath: string;
+      floorId: ID;
+      initGit?: boolean;
+      createGithubRepo?: { name: string; private: boolean } | null;
+    };
     result: Project;
   };
+  /** Link a legacy project to GitHub (same rules as create_project). */
+  link_project_github: { args: { id: ID; createGithubRepo?: { name: string; private: boolean } | null }; result: Project };
+  /** Re-reads .claude/agents in the project and syncs its repo agents (balcony crew). */
+  scan_repo_agents: { args: { projectId: ID }; result: Agent[] };
+  /** Owner only. Stored on the host, never sent to clients; `gh auth token` or GITHUB_TOKEN are used when unset. */
+  set_github_token: { args: { token: string | null }; result: { configured: boolean } };
+  get_github_status: { args: Record<string, never>; result: { configured: boolean; source: 'gh' | 'env' | 'settings' | null; login: string | null } };
   remove_project: { args: { id: ID }; result: null };
   hire_agent: {
     args: {
@@ -322,6 +415,28 @@ export interface Commands {
     result: null;
   };
   get_transcript: { args: { agentId: ID; limit?: number }; result: TranscriptEntry[] };
+  // repo agents (balcony crew)
+  /** Calls a repo agent to work on your account: it walks to a hot desk, runs, and mails you a report. */
+  invoke_repo_agent: { args: { agentId: ID; prompt: string; accountId?: ID | null }; result: Agent };
+  // inbox
+  mark_mail_read: { args: { id: ID }; result: null };
+  /** Continues the conversation with the mail's agent (it comes back to a desk if needed). */
+  reply_mail: { args: { id: ID; text: string }; result: null };
+  delete_mail: { args: { id: ID }; result: null };
+  // Claude accounts
+  /** Adds a new login slot on your machine and starts `claude auth login` for it (output via account_login_output). */
+  add_account: { args: { label: string }; result: ClaudeAccount };
+  account_login_input: { args: { accountId: ID; data: string }; result: null };
+  /** Re-checks login status (email, plan) of your accounts. */
+  refresh_accounts: { args: Record<string, never>; result: ClaudeAccount[] };
+  remove_account: { args: { id: ID }; result: null };
+  /** Which of your accounts an agent of yours runs on (applies from its next session). */
+  set_agent_account: { args: { agentId: ID; accountId: ID | null }; result: Agent };
+  /**
+   * Moves an agent's work onto your machine and account: its current
+   * task/branch continues in a new session of yours, with a handoff summary.
+   */
+  take_over_agent: { args: { agentId: ID; accountId?: ID | null }; result: Agent };
   get_usage_report: { args: Record<string, never>; result: UsageReport };
   update_settings: { args: { patch: Partial<Settings> }; result: Settings };
   // multiplayer
@@ -379,6 +494,10 @@ export interface RunnerStart {
   mcpServers: Record<string, unknown>;
   /** Credentials for the HQ MCP tools (board access) for this agent. */
   hq: { url: string; token: string; manager: boolean };
+  /** Claude Code config dir of the account to run on (null = default login). */
+  configDir: string | null;
+  /** Run as this repo agent (`claude --agent <name>`). */
+  repoAgentName: string | null;
 }
 
 export type RunnerOp =
@@ -390,7 +509,15 @@ export type RunnerOp =
   | { op: 'pty_input'; sessionKey: string; data: string }
   | { op: 'pty_resize'; sessionKey: string; cols: number; rows: number }
   /** Answered with an `exit` runner_event on `requestKey` (error null = removed). */
-  | { op: 'cleanup'; requestKey: string; project: Project; task: Task };
+  | { op: 'cleanup'; requestKey: string; project: Project; task: Task }
+  /** Lists .claude/agents in the runner's checkout; answered with runner_reply. */
+  | { op: 'scan_agents'; requestKey: string; project: Project }
+  /** `claude auth status --json` for each config dir; answered with runner_reply. */
+  | { op: 'account_status'; requestKey: string; configDirs: Array<string | null> }
+  /** Starts `claude auth login` in a PTY for that config dir; output via runner_event 'pty' on requestKey. */
+  | { op: 'account_login'; requestKey: string; configDir: string }
+  /** Before a takeover: commit WIP on the task branch and push it if there is an origin; answered with runner_reply. */
+  | { op: 'handoff'; requestKey: string; project: Project; task: Task };
 
 export type RunnerSessionEvent =
   | { type: 'session'; sessionId: string; interactive: boolean }
@@ -425,6 +552,7 @@ export type RunnerSessionEvent =
 
 export type RunnerMessage =
   | { type: 'runner_event'; sessionKey: string; event: RunnerSessionEvent }
+  | { type: 'runner_reply'; requestKey: string; ok: boolean; result: unknown; error: string | null }
   | { type: 'runner_hello'; claudeVersion: string | null };
 
 export type HostToRunner = { type: 'runner_op'; op: RunnerOp };
