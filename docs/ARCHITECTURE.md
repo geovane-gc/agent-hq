@@ -65,7 +65,8 @@ The customization catalog (every decoration, desk option, room style and theme, 
 | Path | Role |
 |---|---|
 | `office3d/OfficeScene.tsx` | One floor: lights, room, workstations, players, and the camera director (controls, zoom into a monitor and back) |
-| `office3d/Room.tsx` | Themed floor and walls (cut away in the overview), ceiling with lights (first person), windows, boss room, whiteboard, elevator, lounge, plants |
+| `office3d/Room.tsx` | Themed floor and walls (cut away in the overview), ceiling with lights (first person), windows, the front glass with the balcony's sliding door, boss room, whiteboard, elevator, lounge, plants |
+| `office3d/Balcony.tsx` | The balcony: deck, railing, benches, hot desks and the repo agents smoking or walking along the aisles to a desk and back |
 | `office3d/layout.ts` | Floor plan, fixture positions and collision boxes shared by the room, cameras and players |
 | `office3d/Workstation.tsx` | Desk, monitor (live screen), keyboard and chair with the seated agent; status picks the animation clip |
 | `office3d/models.tsx` | Loads the Blender glTF models; per-instance recoloring; the animated `Character` (hair styles, suit) |
@@ -266,6 +267,15 @@ use the commands.
   The partitions and the outer wall behind the screen take the floor's wall finish (solid even with the glass finish),
   and the left wall has no windows there. Decorate mode may furnish the room's corners but keeps its door, the space
   in front of the screen and of the whiteboard, and the screen's stretch of wall clear (`decor/placement.ts`).
+- **Balcony layout** (`layout.ts → balconyFront`, `balconyLayout`): the deck runs along the front wall, 0.5 m in from
+  each end (in front of the meeting room too), at least 45% as deep as the floor (5 to 7 m) and deeper when the crew
+  needs more rows. The front wall is glass only right of the meeting room's partition, with a 1.6 m sliding door
+  near its left end (it slides open when the first-person camera comes near). Outside: a walkway along the glass, an
+  aisle from the door to the railing, hot desks on both sides of it (nearest first, more rows when a row is full),
+  the crew smoking along the railing on both sides of the aisle, which stays open (more lines when it's long), and
+  benches on the free ends. Repo agents walk along the aisles (`balconyRoute`). In walk mode the player's bounds
+  reach the railing and `balconyColliders` adds the front wall (with the door gap), the railing, the balcony's
+  furniture and the idle smokers; decorate mode keeps the inside of the door clear.
 - **Electron**: `setupMedia` in `apps/desktop/main.cjs` grants microphone-only `media` and `speaker-selection` to the
   office's own origin (asking macOS for microphone access when needed), and answers `getDisplayMedia` with the system
   picker where there is one (macOS 15+), otherwise a small menu of screens and windows with thumbnails.

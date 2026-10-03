@@ -121,58 +121,206 @@ export function fixtures(plan: FloorPlan): Fixtures {
   };
 }
 
-export interface Balcony extends Rect {
+/** The balcony's footprint along the front wall; it only depends on the floor, never on the crew. */
+export interface BalconyFront {
+  /** The deck runs along most of the front wall, in front of the meeting room too. */
+  minX: number;
+  maxX: number;
+  /** The stretch of the front wall that is glass: the open-plan part, never the meeting room's wall. */
+  glass: { minX: number; maxX: number };
+  /** The sliding glass door in it, the way out to the balcony. */
+  door: { minX: number; maxX: number };
+}
+
+export interface Balcony extends Rect, BalconyFront {
   /** Hot desks where summoned repo agents work, facing the office (Workstation slots). */
   desks: Slot[];
   /** Where idle repo agents stand smoking, looking out over the railing. */
   spots: Array<{ position: Vec3; rotation: number }>;
-  /** With no crew yet: empty benches, each with an ashtray at its right end, looking out over the railing. */
+  /** Benches looking out over the railing, each with an ashtray at its right end. */
   benches: Vec3[];
+  plants: Array<{ position: Vec3; tall: boolean }>;
+  /**
+   * Where repo agents walk between the railing and the hot desks: the aisle
+   * running from the door to the railing (x), and the aisle behind each row
+   * of desks (z, by row).
+   */
+  aisles: { x: number; z: number[] };
 }
 
-const HOT_DESK_SPACING = 1.8;
-const HOT_DESK_ROW = 2;
+/** Solid wall kept at the ends of the glass (by the meeting room's partition, by the right wall). */
+const GLASS_INSET = 0.5;
+const DOOR_WIDTH = 1.6;
+/** Door center from the left end of the glass: close to the spawn point, clear of the corner plant and the lounge. */
+const DOOR_OFFSET = 2.3;
+const DECK_INSET = 0.5;
+/** Free strip along the glass, in front of the door and the desks. */
+const WALKWAY = 1.2;
+const HOT_DESK_SPACING = 1.7;
+const HOT_DESK_ROW = 2.6;
+/** A hot desk's extent in z, from its position (rotation 0: screen towards the office, chair towards the railing). */
+const DESK_FRONT = 0.92;
+const DESK_BACK = 0.43;
+/** From the last row of desks to the smokers along the railing. */
+const SMOKE_AISLE = 1.3;
 const SMOKER_SPACING = 1.05;
+const SMOKER_LINE = 0.75;
+/** Extra room between the smokers on either side of the door aisle. */
+const AISLE_GAP = 1;
+const RAILING_GAP = 0.55;
+/** A bench and the ashtray at its right end. */
+const BENCH_LENGTH = 2;
+const BENCH_GAP = 0.8;
+
+/** Where the balcony goes on a floor: deck, glass and door. */
+export function balconyFront(plan: FloorPlan): BalconyFront {
+  const glassMin = meetingRoom(plan).maxX + GLASS_INSET;
+  const glassMax = plan.maxX - GLASS_INSET;
+  const doorX = Math.min(glassMin + DOOR_OFFSET, (glassMin + glassMax) / 2);
+  return {
+    minX: plan.minX + DECK_INSET,
+    maxX: plan.maxX - DECK_INSET,
+    glass: { minX: glassMin, maxX: glassMax },
+    door: { minX: doorX - DOOR_WIDTH / 2, maxX: doorX + DOOR_WIDTH / 2 },
+  };
+}
 
 /**
- * The balcony outside the front wall, home of the repo agents: one hot desk
- * per crew member along the glass (from the left), and a smoking corner. A
- * small crew smokes right next to the desks; a bigger one gets rows of desks
- * and the whole railing to smoke at. Every floor has one; until its projects
- * define agents it only has empty benches.
+ * The balcony outside the front wall, home of the repo agents. A walkway runs
+ * along the glass, and an aisle from the sliding door straight to the
+ * railing; hot desks (one per crew member) line up on both sides of it,
+ * nearest the door first, in more rows when a row is full; the crew smokes
+ * at the railing on both sides of the aisle, in more lines when it's long,
+ * with benches on the free stretches. It's as wide as most of the front wall and
+ * at least about half as deep as the floor. Every floor has one; until its
+ * projects define agents it only has empty benches.
  */
 export function balconyLayout(plan: FloorPlan, crew: number): Balcony {
+  const front = balconyFront(plan);
+  const { minX, maxX, door } = front;
+  const z0 = plan.maxZ;
+  const doorX = (door.minX + door.maxX) / 2;
+  const minDepth = Math.min(7, Math.max(5, (plan.maxZ - plan.minZ) * 0.45));
+
+  // Hot desk columns on both sides of the door aisle, nearest first.
+  const columns: number[] = [];
+  for (let x = door.maxX + 0.35 + 0.75; x + 0.75 <= maxX - 0.3; x += HOT_DESK_SPACING) columns.push(x);
+  for (let x = door.minX - 0.35 - 0.75; x - 0.75 >= minX + 0.3; x -= HOT_DESK_SPACING) columns.push(x);
+  columns.sort((a, b) => Math.abs(a - doorX) - Math.abs(b - doorX));
+  const perRow = Math.max(1, columns.length);
   // The server hands out desk indexes below the crew size, so `crew` desks always suffice.
-  const n = crew;
-  const minX = plan.boss.maxX + 1;
-  const maxX = plan.maxX - 1;
-  const width = maxX - minX;
-  if (!crew) {
-    const count = Math.max(1, Math.min(3, Math.floor(width / 5)));
-    const benches = Array.from({ length: count }, (_, i): Vec3 => [minX + (width * (i + 0.5)) / count - 0.3, 0, plan.maxZ + 1.35]);
-    return { minX, maxX, minZ: plan.maxZ, maxZ: plan.maxZ + 2.5, desks: [], spots: [], benches };
-  }
-  const perRow = Math.max(1, Math.floor(width / HOT_DESK_SPACING));
-  const rows = Math.ceil(n / perRow);
-  const desks: Slot[] = [];
-  for (let i = 0; i < n; i++) {
-    desks.push({ index: i, position: [minX + 0.9 + (i % perRow) * HOT_DESK_SPACING, 0, plan.maxZ + 1.2 + Math.floor(i / perRow) * HOT_DESK_ROW], rotation: 0 });
-  }
+  const rows = crew ? Math.ceil(crew / perRow) : 0;
+  const deskZ = (row: number) => z0 + WALKWAY + DESK_FRONT + row * HOT_DESK_ROW;
+  const desks: Slot[] = Array.from({ length: crew }, (_, i) => ({
+    index: i,
+    position: [columns[i % perRow] ?? doorX + 1.5, 0, deskZ(Math.floor(i / perRow))],
+    rotation: 0,
+  }));
+
+  // Smokers along the railing, on both sides of the door aisle (which stays open to the railing), more lines
+  // inwards when needed.
+  const lineMin = minX + 1; // clear of the corner plant
+  const lineMax = maxX - 0.6;
+  // The spots nearest the aisle on each side, and how many fit from there to each end.
+  const nearLeft = doorX - (SMOKER_SPACING + AISLE_GAP) / 2;
+  const nearRight = doorX + (SMOKER_SPACING + AISLE_GAP) / 2;
+  const fitLeft = Math.max(0, Math.floor((nearLeft - lineMin) / SMOKER_SPACING) + 1);
+  const fitRight = Math.max(0, Math.floor((lineMax - nearRight) / SMOKER_SPACING) + 1);
+  const perLine = Math.max(1, fitLeft + fitRight);
+  const lines = Math.ceil(crew / perLine);
+  const content = crew ? WALKWAY + DESK_FRONT + (rows - 1) * HOT_DESK_ROW + DESK_BACK + SMOKE_AISLE + RAILING_GAP + (lines - 1) * SMOKER_LINE : 0;
+  const maxZ = z0 + Math.max(minDepth, content);
   // Facing the view, turned a little towards each other.
   const turn = (i: number) => Math.PI + (i % 2 ? 0.35 : -0.35);
-  if (n * (HOT_DESK_SPACING + SMOKER_SPACING) + 0.6 <= width) {
-    const x0 = minX + n * HOT_DESK_SPACING + 0.9;
-    const spots = Array.from({ length: crew }, (_, i) => ({ position: [x0 + i * SMOKER_SPACING, 0, plan.maxZ + 1.45 + (i % 2) * 0.3] as Vec3, rotation: turn(i) }));
-    return { minX, maxX, minZ: plan.maxZ, maxZ: plan.maxZ + 2.5, desks, spots, benches: [] };
+  const spots: Balcony['spots'] = [];
+  for (let line = 0; line < lines; line++) {
+    const count = Math.min(perLine, crew - line * perLine);
+    // Half on each side of the aisle, more on the side with room when the other one is full.
+    const left = Math.min(fitLeft, Math.max(count - fitRight, Math.ceil(count / 2)));
+    for (let k = 0; k < count; k++) {
+      const i = line * perLine + k;
+      const x = k < left ? nearLeft - (left - 1 - k) * SMOKER_SPACING : nearRight + (k - left) * SMOKER_SPACING;
+      spots.push({ position: [x, 0, maxZ - RAILING_GAP - line * SMOKER_LINE - (k % 2) * 0.12], rotation: turn(i) });
+    }
   }
-  const smokeZ = plan.maxZ + 1.2 + (rows - 1) * HOT_DESK_ROW + 1.35;
-  const perLine = Math.max(1, Math.floor(width / SMOKER_SPACING));
-  const spots = Array.from({ length: crew }, (_, i) => ({
-    // Along the railing from the left, a second line just behind the first if needed.
-    position: [minX + 0.6 + (i % perLine) * SMOKER_SPACING + (Math.floor(i / perLine) % 2) * 0.5, 0, smokeZ - Math.floor(i / perLine) * 0.75] as Vec3,
-    rotation: turn(i),
-  }));
-  return { minX, maxX, minZ: plan.maxZ, maxZ: smokeZ + 0.65, desks, spots, benches: [] };
+
+  // Benches: spread along the railing while there's no crew; on the free ends of it otherwise.
+  const benchZ = maxZ - 0.75;
+  const benches: Vec3[] = [];
+  if (!crew) {
+    const count = Math.max(1, Math.min(4, Math.round((maxX - minX) / 5)));
+    for (let i = 0; i < count; i++) benches.push([minX + ((maxX - minX) * (i + 0.5)) / count - 0.3, 0, benchZ]);
+  } else {
+    const xs = spots.filter((s) => s.position[2] > maxZ - RAILING_GAP - 0.2).map((s) => s.position[0]);
+    // Up to two on each free end of the railing, grouped in the middle of it.
+    for (const [from, to] of [[minX + 0.75, Math.min(...xs) - 0.6], [Math.max(...xs) + 0.6, maxX - 0.75]]) {
+      const count = Math.min(2, Math.floor((to - from + BENCH_GAP) / (BENCH_LENGTH + BENCH_GAP)));
+      const start = (from + to) / 2 - (count * BENCH_LENGTH + (count - 1) * BENCH_GAP) / 2;
+      for (let i = 0; i < count; i++) benches.push([start + 0.78 + i * (BENCH_LENGTH + BENCH_GAP), 0, benchZ]);
+    }
+  }
+
+  return {
+    ...front,
+    minZ: z0,
+    maxZ,
+    desks,
+    spots,
+    benches,
+    plants: [
+      { position: [minX + 0.4, 0, maxZ - 0.4], tall: false },
+      { position: [maxX - 0.35, 0, z0 + 0.35], tall: true },
+      { position: [minX + 0.35, 0, z0 + 0.35], tall: true },
+    ],
+    aisles: { x: doorX, z: Array.from({ length: rows }, (_, r) => deskZ(r) + DESK_BACK + 0.62) },
+  };
+}
+
+/** Where a repo agent sits at a hot desk (the Workstation's chair). */
+const hotDeskChair = (desk: Slot): Vec3 => [desk.position[0], 0, desk.position[2] + 0.08];
+
+/**
+ * A repo agent's walk from its smoking spot to its hot desk, along the
+ * aisles (reverse it for the way back): into the aisle behind the last row of
+ * desks, through the door aisle to the desk's row if it's further in, then
+ * along that row to the chair.
+ */
+export function balconyRoute(layout: Balcony, from: Vec3, desk: Slot): Vec3[] {
+  const rows = layout.aisles.z;
+  const row = Math.max(0, Math.min(rows.length - 1, rows.findIndex((z) => z > desk.position[2])));
+  const last = rows[rows.length - 1] ?? from[2];
+  const chair = hotDeskChair(desk);
+  const route: Vec3[] = [from, [from[0], 0, last]];
+  if (rows[row] !== undefined && rows[row] !== last) route.push([layout.aisles.x, 0, last], [layout.aisles.x, 0, rows[row]]);
+  route.push([chair[0], 0, rows[row] ?? last], chair);
+  return route.filter((p, i) => i === 0 || Math.hypot(p[0] - route[i - 1][0], p[2] - route[i - 1][2]) > 0.01);
+}
+
+/**
+ * What stops the first-person player on the balcony side: the front wall with
+ * its door, the railing (and everything beyond it), the balcony's furniture
+ * and the crew members standing at their smoking spots (`smoking`: spot indexes).
+ */
+export function balconyColliders(plan: FloorPlan, balcony: Balcony, smoking: number[] = []): Rect[] {
+  const { door } = balcony;
+  const out: Rect[] = [
+    // front wall, with the door gap
+    { minX: plan.minX, maxX: door.minX, minZ: plan.maxZ - 0.08, maxZ: plan.maxZ + 0.08 },
+    { minX: door.maxX, maxX: plan.maxX, minZ: plan.maxZ - 0.08, maxZ: plan.maxZ + 0.08 },
+    // railing: the far side, and the drop on both ends of the deck
+    { minX: plan.minX - 1, maxX: plan.maxX + 1, minZ: balcony.maxZ - 0.04, maxZ: balcony.maxZ + 1 },
+    { minX: plan.minX - 1, maxX: balcony.minX + 0.04, minZ: plan.maxZ, maxZ: balcony.maxZ + 1 },
+    { minX: balcony.maxX - 0.04, maxX: plan.maxX + 1, minZ: plan.maxZ, maxZ: balcony.maxZ + 1 },
+  ];
+  // hot desks (desk, chair and whoever sits there)
+  for (const d of balcony.desks) out.push({ minX: d.position[0] - 0.75, maxX: d.position[0] + 0.75, minZ: d.position[2] - DESK_FRONT, maxZ: d.position[2] + DESK_BACK + 0.1 });
+  for (const b of balcony.benches) out.push(box(b[0], b[2], 0.78, 0.3), box(b[0] + 1.05, b[2] + 0.05, 0.15, 0.15));
+  for (const p of balcony.plants) out.push(box(p.position[0], p.position[2], 0.3, 0.3));
+  for (const i of smoking) {
+    const spot = balcony.spots[i]?.position;
+    if (spot) out.push(box(spot[0], spot[2], 0.22, 0.22));
+  }
+  return out;
 }
 
 /** Something mounted on a wall: center, rotation around Y (facing direction) and size. */

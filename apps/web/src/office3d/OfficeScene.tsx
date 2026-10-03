@@ -12,7 +12,7 @@ import { Balcony } from './Balcony.tsx';
 import { DecorLayer } from './decor/DecorEditor.tsx';
 import { SceneLighting } from './decor/lighting.tsx';
 import { decorColliders } from './decor/placement.ts';
-import { balconyLayout, colliders, fixtures, floorPlan, meetingRoom, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
+import { balconyColliders, balconyLayout, colliders, fixtures, floorPlan, meetingRoom, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
 import { MeetingRoom } from './MeetingRoom.tsx';
 import { Players } from './Players.tsx';
 import { Room } from './Room.tsx';
@@ -43,6 +43,8 @@ function CameraDirector(props: {
   mode: CameraMode;
   plan: FloorPlan;
   span: number;
+  /** Where the first-person player can go: the floor and the balcony. */
+  bounds: Rect;
   colliders: Rect[];
   spawn: Vec3;
   focus: { eye: THREE.Vector3; screen: THREE.Vector3 } | null;
@@ -87,7 +89,7 @@ function CameraDirector(props: {
     <IsoControls center={props.plan.center} span={props.span} restoreTarget={restore?.target ?? null} />
   ) : (
     <FirstPersonControls
-      bounds={props.plan}
+      bounds={props.bounds}
       colliders={props.colliders}
       spawn={props.spawn}
       restore={restore !== null}
@@ -125,21 +127,26 @@ export function OfficeScene(props: {
   const meeting = useMemo(() => meetingRoom(plan), [plan]);
   // The drawing whiteboard's easel, by the task board.
   const easel = useMemo(() => easelPlacement(plan), [plan]);
+  const agents = world.agents.filter((a) => a.floorId === floor.id && a.kind !== 'repo').sort((a, b) => a.createdAt - b.createdAt);
+  // Repo agents (.claude/agents of this floor's projects) live on the balcony. Every floor has one, crew or not.
+  const crew = world.agents.filter((a) => a.floorId === floor.id && a.kind === 'repo').sort((a, b) => a.createdAt - b.createdAt);
+  const balcony = useMemo(() => balconyLayout(plan, crew.length), [plan, crew.length]);
+  // Crew members smoking at the railing stand still: the player walks around them.
+  const smoking = crew.flatMap((a, i) => (a.repo?.location === 'balcony' ? [i] : [])).join();
   const solid = useMemo(() => {
     // The meeting room's wall whiteboard sticks out of the partition a little (frame and marker tray).
     const anchor = meeting.whiteboardAnchor;
     const wallBoard = toWorld([anchor.position[0], 0, anchor.position[2]], anchor.rotation, [0, 0, 0.05]);
     return [
       ...colliders(plan, floor.theme),
+      ...balconyColliders(plan, balcony, smoking ? smoking.split(',').map(Number) : []),
       ...decorColliders(decor),
       whiteboardCollider(easel.position, easel.rotation),
       whiteboardCollider(wallBoard, anchor.rotation, anchor.width, 'wall'),
     ];
-  }, [plan, floor.theme, easel, meeting, decor]);
-  const agents = world.agents.filter((a) => a.floorId === floor.id && a.kind !== 'repo').sort((a, b) => a.createdAt - b.createdAt);
-  // Repo agents (.claude/agents of this floor's projects) live on the balcony. Every floor has one, crew or not.
-  const crew = world.agents.filter((a) => a.floorId === floor.id && a.kind === 'repo').sort((a, b) => a.createdAt - b.createdAt);
-  const balcony = useMemo(() => balconyLayout(plan, crew.length), [plan, crew.length]);
+  }, [plan, floor.theme, easel, meeting, decor, balcony, smoking]);
+  // The player can walk out through the balcony door: the front wall and the railing are colliders.
+  const walkable = useMemo<Rect>(() => ({ minX: plan.minX, maxX: plan.maxX, minZ: plan.minZ, maxZ: balcony.maxZ }), [plan, balcony]);
   const projectIds = new Set(world.projects.filter((p) => p.floorId === floor.id).map((p) => p.id));
   const tasks = world.tasks.filter((t) => projectIds.has(t.projectId));
   const canRecruit = world.agents.length < world.settings.maxAgents;
@@ -148,11 +155,12 @@ export function OfficeScene(props: {
   const lockRef = useRef<(() => void) | null>(null);
   const htmlLayer = useRef<HTMLDivElement>(null);
   const span = Math.max(plan.maxX - plan.minX, plan.maxZ - plan.minZ);
-  // Frame the balcony too in the overview.
+  // Frame the whole balcony too in the overview. The camera looks in from the front, where things come out
+  // bigger: aim a little in front of the middle and pull back a little.
   const view = useMemo(() => {
-    const extra = balcony.maxZ - plan.maxZ;
-    const center: Vec3 = [plan.center[0], 0, plan.center[2] + extra / 2];
-    return { plan: { ...plan, center }, span: Math.max(plan.maxX - plan.minX, plan.maxZ - plan.minZ + extra) };
+    const depth = balcony.maxZ - plan.minZ;
+    const center: Vec3 = [plan.center[0], 0, (plan.minZ + balcony.maxZ) / 2 + depth * 0.2];
+    return { plan: { ...plan, center }, span: Math.max(plan.maxX - plan.minX, depth) * 1.2 };
   }, [plan, balcony]);
 
   const focus = useMemo(() => {
@@ -263,6 +271,7 @@ export function OfficeScene(props: {
           mode={props.mode}
           plan={view.plan}
           span={view.span}
+          bounds={walkable}
           colliders={solid}
           spawn={fx.spawn}
           focus={focus}

@@ -1,6 +1,6 @@
 import type { DecorItem, FloorTheme } from '@agent-hq/protocol';
 import { catalogItem, type CatalogItem } from '@agent-hq/protocol/catalog';
-import { colliders, fixtures, meetingRoom, toWorld, WALL_HEIGHT, windowSpots, type FloorPlan, type Rect } from '../layout.ts';
+import { balconyFront, colliders, fixtures, meetingRoom, toWorld, WALL_HEIGHT, windowSpots, type FloorPlan, type Rect } from '../layout.ts';
 import { easelPlacement, whiteboardCollider } from '../WhiteboardStand.tsx';
 
 // Where decorations may go: grid snapping, hanging things on walls, and
@@ -98,9 +98,9 @@ export interface Check {
 }
 
 /**
- * Spots that must stay walkable: the boss room door, the elevator, the task board, the drawing easel, and in the
- * meeting room its door, the space in front of the wall screen and in front of the wall whiteboard. The rest of the
- * meeting room (its corners) can be decorated like any other floor space.
+ * Spots that must stay walkable: the boss room door, the elevator, the task board, the drawing easel, the way to the
+ * balcony door, and in the meeting room its door, the space in front of the wall screen and in front of the wall
+ * whiteboard. The rest of the meeting room (its corners) can be decorated like any other floor space.
  */
 function keepClear(plan: FloorPlan): Rect[] {
   const f = fixtures(plan);
@@ -109,6 +109,7 @@ function keepClear(plan: FloorPlan): Rect[] {
   const easel = easelPlacement(plan);
   const board = m.whiteboardAnchor;
   const screen = m.screen;
+  const door = balconyFront(plan).door;
   return [
     { minX: b.maxX - 0.7, maxX: b.maxX + 0.7, minZ: b.maxZ - 1.4, maxZ: b.maxZ + 0.2 },
     { minX: f.elevator[0] - 1.1, maxX: f.elevator[0] + 1.1, minZ: plan.minZ, maxZ: plan.minZ + 1.5 },
@@ -117,6 +118,8 @@ function keepClear(plan: FloorPlan): Rect[] {
     // the easel and the space in front of it
     whiteboardCollider(easel.position, easel.rotation),
     whiteboardCollider(toWorld(easel.position, easel.rotation, [0, 0, 0.6]), easel.rotation),
+    // in front of the balcony's sliding door
+    { minX: door.minX - 0.4, maxX: door.maxX + 0.4, minZ: plan.maxZ - 1.6, maxZ: plan.maxZ },
     // meeting room door, both sides
     { minX: m.maxX - 0.9, maxX: m.maxX + 0.9, minZ: m.door.minZ, maxZ: m.door.maxZ },
     // in front of the wall screen and the wall whiteboard
