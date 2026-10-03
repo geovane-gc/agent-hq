@@ -326,7 +326,7 @@ export interface TakeoverRequest {
   createdAt: number;
 }
 
-export interface Snapshot {
+export interface Snapshot extends TycoonSnapshot {
   you: User;
   users: User[];
   /** Everyone's connected Claude accounts (metadata only). */
@@ -381,13 +381,14 @@ export type ServerEvent =
   | { type: 'terminal_output'; data: string }
   | { type: 'terminal_exit'; code: number | null }
   /** Raw output of an agent's Claude Code terminal; sent to clients that opened it. */
-  | { type: 'agent_terminal_output'; agentId: ID; data: string };
+  | { type: 'agent_terminal_output'; agentId: ID; data: string }
+  | TycoonEvent;
 
 // ---------------------------------------------------------------- commands (client -> server)
 
 type AgentEditable = 'name' | 'role' | 'model' | 'instructions' | 'permissionMode' | 'floorId' | 'isManager' | 'integrations' | 'appearance';
 
-export interface Commands {
+export interface Commands extends HostCommands {
   create_building: { args: { name: string; kind: BuildingKind; color?: string }; result: Building };
   update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color'>> }; result: Building };
   remove_building: { args: { id: ID }; result: null };
@@ -516,7 +517,8 @@ export type ServerMessage =
   | { type: 'snapshot'; snapshot: Snapshot }
   | { type: 'event'; event: ServerEvent }
   | { type: 'reply'; id: number; ok: true; result: unknown }
-  | { type: 'reply'; id: number; ok: false; error: string };
+  | { type: 'reply'; id: number; ok: false; error: string }
+  | LobbyMessage;
 
 // ---------------------------------------------------------------- runner protocol
 // A runner executes agent sessions on its user's machine. The host sends it
@@ -606,3 +608,102 @@ export type RunnerMessage =
   | { type: 'runner_hello'; claudeVersion: string | null };
 
 export type HostToRunner = { type: 'runner_op'; op: RunnerOp };
+
+// ================================================================ tycoon (phase 1): offices & economy
+// Offices are separate saves on the host. The economy is a ledger of
+// transactions per office: revenue for verified merged work, expenses for
+// API-equivalent token costs and hiring fees. Amounts are USD.
+// Hooked into the types above through `Snapshot extends TycoonSnapshot`,
+// `ServerEvent | TycoonEvent`, `Commands extends HostCommands` and
+// `ServerMessage | LobbyMessage`.
+
+/** sandbox: a work tool, nothing gated, money is a scoreboard. career: tycoon progression. */
+export type OfficeMode = 'sandbox' | 'career';
+
+export interface OfficeInfo {
+  id: ID;
+  name: string;
+  mode: OfficeMode;
+  createdAt: number;
+  lastOpenedAt: number;
+}
+
+export type LedgerKind =
+  | 'starting_cash'
+  /** Verified delivered work: a task branch merged into the project's default branch. */
+  | 'revenue'
+  /** Coordinator's cut for work it delegated (paid on top of the revenue). */
+  | 'commission'
+  /** Reserved for later bonuses (CI green, no revert within 7 days…). */
+  | 'bonus'
+  /** API-equivalent token cost, rolled up per day, agent and task. */
+  | 'token_cost'
+  | 'hiring_fee'
+  | 'adjustment';
+
+/** Filter for get_ledger: one kind, or every income / every expense. */
+export type LedgerFilter = LedgerKind | 'income' | 'expense';
+
+export interface LedgerEntry {
+  id: number;
+  ts: number;
+  kind: LedgerKind;
+  /** Signed: positive is income, negative is an expense. */
+  amount: number;
+  description: string;
+  agentId: ID | null;
+  taskId: ID | null;
+  projectId: ID | null;
+  /** Cash right after this entry (null on live events). */
+  balance: number | null;
+}
+
+export interface EconomySummary {
+  mode: OfficeMode;
+  cash: number;
+  /** Revenue + commissions + bonuses. */
+  revenue: number;
+  /** API-equivalent token costs, as a positive number. */
+  expenses: number;
+  /** revenue − expenses. */
+  profit: number;
+  /** Hiring fees paid so far: an investment, so it lowers cash but not profit. */
+  invested: number;
+  /** Income booked today (local time), counted against the daily cap. */
+  earnedToday: number;
+  dailyRevenueCap: number;
+  /** One-time fee to hire an agent here (0 in sandbox). */
+  hiringFee: number;
+  /** Career: hiring needs enough cash. Sandbox: nothing is gated. */
+  gated: boolean;
+}
+
+export interface TycoonSnapshot {
+  /** The open office (save). */
+  office: OfficeInfo | null;
+  economy: EconomySummary | null;
+}
+
+/** A ledger entry was booked (or a rolled-up one updated); carries the new totals. */
+export type TycoonEvent = { type: 'ledger'; entry: LedgerEntry; economy: EconomySummary };
+
+/** Handled by the host itself (they also work when no office is open), not by an office's orchestrator. */
+export interface HostCommands {
+  /** Owner only. */
+  list_offices: { args: Record<string, never>; result: { offices: OfficeInfo[]; currentId: ID | null } };
+  /** Owner only. Creates a new save and switches the host to it; every client reconnects. */
+  create_office: { args: { name: string; mode: OfficeMode }; result: OfficeInfo };
+  /** Owner only. Switches the host to that save (just marks it as last opened if it already is the open one). */
+  open_office: { args: { id: ID }; result: OfficeInfo };
+  get_ledger: { args: { filter?: LedgerFilter | null; limit?: number }; result: { entries: LedgerEntry[]; economy: EconomySummary } };
+  /** Fetches the projects' origins and pays any newly merged task branches. */
+  check_deliveries: { args: Record<string, never>; result: { paid: number; economy: EconomySummary } };
+}
+
+export type HostCommandName = keyof HostCommands;
+
+/** Sent to the owner instead of a snapshot while no office is open (fresh install). */
+export interface LobbyMessage {
+  type: 'lobby';
+  offices: OfficeInfo[];
+}

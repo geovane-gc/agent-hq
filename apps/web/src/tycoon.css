@@ -1,0 +1,162 @@
+/* ==========================================================================
+   Tycoon (phase 1): start screen, cash badge, finances panel, revenue pops.
+   Uses the shared tokens from styles.css; only money colors are added here.
+   ========================================================================== */
+
+:root {
+  --money: #2f9e5b;
+  --money-soft: color-mix(in srgb, var(--money) 14%, var(--surface));
+  --loss: var(--error);
+  --gold: #e7a91c;
+  --title-sky-1: #7fb2ff;
+  --title-sky-2: #c9e3ff;
+  --title-ground: #8fd17a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --money: #46c37b;
+    --title-sky-1: #1d2b4f;
+    --title-sky-2: #34507f;
+    --title-ground: #2f5a35;
+  }
+}
+
+/* ---------- cash badge (status card) */
+.hq-cash {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: var(--money-soft); color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--money) 30%, transparent);
+  border-radius: var(--radius); padding: 6px 10px; text-align: left;
+}
+.hq-cash:hover:not(:disabled) { filter: none; background: color-mix(in srgb, var(--money) 20%, var(--surface)); }
+.hq-cash-icon { font-size: 18px; line-height: 1; }
+.hq-cash-amount { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; flex: 1; }
+.hq-cash-trend { font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
+.hq-cash-trend.up { color: var(--money); background: var(--surface); }
+.hq-cash-trend.down { color: var(--loss); background: var(--surface); }
+.hq-cash.negative { background: color-mix(in srgb, var(--loss) 12%, var(--surface)); border-color: color-mix(in srgb, var(--loss) 30%, transparent); }
+.hq-cash.negative .hq-cash-amount { color: var(--loss); }
+.hq-cash.bump { animation: hq-bump 0.6s ease-out; }
+@keyframes hq-bump { 30% { transform: scale(1.05); box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 45%, transparent); } }
+
+/* Floating "+$X" next to the status card. */
+.hq-float {
+  position: absolute; top: 120px; left: 230px; z-index: 12; pointer-events: none;
+  font-size: 22px; font-weight: 900; color: var(--money);
+  text-shadow: 0 2px 0 var(--surface), 0 4px 14px rgb(0 0 0 / 0.25);
+  animation: hq-float 2.4s ease-out both;
+}
+@keyframes hq-float {
+  0% { opacity: 0; transform: translateY(14px) scale(0.8); }
+  15% { opacity: 1; transform: translateY(0) scale(1.1); }
+  30% { transform: translateY(-6px) scale(1); }
+  100% { opacity: 0; transform: translateY(-46px); }
+}
+
+/* Recruit form note. */
+.hq-fee-note { margin: 0; font-size: 12.5px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--money-soft); color: var(--text-2); }
+.hq-fee-note.short { background: color-mix(in srgb, var(--loss) 12%, var(--surface)); }
+
+/* ---------- finances panel */
+.hq-finances { display: flex; flex-direction: column; gap: 12px; }
+.hq-finances-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hq-finances-note { margin: 0; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); font-size: 13px; }
+.hq-mode-badge { font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.hq-mode-badge.career { background: color-mix(in srgb, var(--gold) 22%, var(--surface)); color: var(--text); }
+.hq-mode-badge.sandbox { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--text); }
+.hq-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.hq-stat { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); }
+.hq-stat span { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.hq-stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.hq-stat.good b { color: var(--money); }
+.hq-stat.bad b { color: var(--loss); }
+.hq-cap { display: flex; flex-direction: column; gap: 4px; }
+.hq-cap-bar { height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface-2); }
+.hq-cap-bar > div { height: 100%; background: var(--gold); border-radius: 3px; transition: width 0.4s ease; }
+.hq-filter { margin-bottom: 0; flex-wrap: wrap; }
+.hq-ledger-wrap { max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+table.hq-ledger { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.hq-ledger th { position: sticky; top: 0; background: var(--surface); text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+table.hq-ledger th, table.hq-ledger td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.hq-ledger tr:last-child td { border-bottom: none; }
+table.hq-ledger .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.hq-ledger th:nth-child(n + 3) { text-align: right; }
+table.hq-ledger .pos { color: var(--money); font-weight: 600; }
+table.hq-ledger .neg { color: var(--loss); }
+table.hq-ledger .nowrap { white-space: nowrap; color: var(--muted); }
+
+/* ---------- start screen */
+.hq-title {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; overflow: auto;
+  background: linear-gradient(180deg, var(--title-sky-1), var(--title-sky-2) 70%, var(--title-ground) 70%);
+  animation: hq-fade 0.25s ease-out;
+}
+@keyframes hq-fade { from { opacity: 0; } }
+.hq-title-sky { position: absolute; left: 0; right: 0; top: calc(70% - 64px); display: flex; justify-content: space-around; font-size: 64px; pointer-events: none; opacity: 0.9; }
+.hq-title-sky span:nth-child(2) { font-size: 84px; margin-top: -20px; }
+.hq-title-card {
+  position: relative; width: min(640px, 100%);
+  background: var(--surface); color: var(--text); border-radius: 24px; padding: 28px;
+  box-shadow: var(--shadow-2); border: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 18px;
+  animation: hq-rise 0.3s ease-out;
+}
+@keyframes hq-rise { from { transform: translateY(16px); opacity: 0; } }
+.hq-title-head { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.hq-title-logo { font-size: 44px; width: 72px; height: 72px; display: grid; place-items: center; border-radius: 22px; background: var(--accent-soft); box-shadow: inset 0 -4px 0 color-mix(in srgb, var(--accent) 30%, transparent); }
+.hq-title-head h1 { font-size: 30px; letter-spacing: -0.02em; }
+.hq-title-head p { margin: 0; color: var(--muted); }
+.hq-title-menu { display: flex; flex-direction: column; gap: 10px; width: min(360px, 100%); margin: 0 auto; }
+.hq-big {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 12px 16px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: inset 0 -3px 0 rgb(0 0 0 / 0.08);
+}
+.hq-big span { font-size: 17px; font-weight: 700; }
+.hq-big small { font-size: 12px; color: var(--muted); }
+.hq-big:hover:not(:disabled) { filter: none; background: var(--surface-3); }
+.hq-big.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; box-shadow: inset 0 -4px 0 rgb(0 0 0 / 0.2); }
+.hq-big.primary small { color: inherit; opacity: 0.85; }
+.hq-big.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+.hq-big.quiet { background: transparent; box-shadow: none; }
+.hq-big:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.hq-title-new { display: flex; flex-direction: column; gap: 14px; }
+.hq-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+.hq-field input { font-size: 16px; padding: 10px 12px; border-radius: var(--radius); }
+.hq-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hq-mode {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left;
+  padding: 14px; background: var(--surface-2); color: var(--text);
+  border: 2px solid var(--border); border-radius: 18px; box-shadow: inset 0 -3px 0 rgb(0 0 0 / 0.06);
+}
+.hq-mode:hover:not(:disabled) { filter: none; border-color: var(--border-strong); }
+.hq-mode.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: var(--focus); }
+.hq-mode.career.on { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 35%, transparent); }
+.hq-mode-icon { font-size: 30px; line-height: 1; }
+.hq-mode b { font-size: 18px; }
+.hq-mode-pitch { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.hq-mode ul { margin: 2px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--text-2); }
+.hq-title-new footer, .hq-title-load footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+.hq-title-load ul { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; }
+.hq-title-load li button {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px;
+}
+.hq-title-load li button:hover:not(:disabled) { filter: none; background: var(--surface-3); }
+.hq-title-load li b { flex: 1; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hq-title-busy { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px; font-weight: 600; }
+.hq-spinner { width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--surface-3); border-top-color: var(--accent); animation: hq-spin 0.8s linear infinite; }
+@keyframes hq-spin { to { transform: rotate(360deg); } }
+.hq-title-error { margin: 0; text-align: center; }
+
+@media (max-width: 640px) {
+  .hq-modes, .hq-stats { grid-template-columns: 1fr; }
+  .hq-title-card { padding: 20px; }
+  .hq-float { left: 50%; top: 96px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hq-title, .hq-title-card, .hq-cash.bump { animation: none; }
+  .hq-float { animation-duration: 1.2s; }
+}

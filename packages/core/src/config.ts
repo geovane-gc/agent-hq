@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 export interface Config {
+  /**
+   * The open office's data dir (database, worktrees, agent notes). Each office
+   * (save) has its own; see offices.ts. Before an office is open it equals rootDir.
+   */
   dataDir: string;
+  /** Machine-wide data dir (`--data-dir`): owner token, the offices index and every office. */
+  rootDir: string;
   host: string;
   port: number;
   dev: boolean;
@@ -35,6 +41,7 @@ export function loadConfig(argv = process.argv.slice(2)): Config {
 
   return {
     dataDir,
+    rootDir: dataDir,
     host: argValue(argv, '--host') ?? process.env.AGENT_HQ_HOST ?? '127.0.0.1',
     port: Number(argValue(argv, '--port') ?? process.env.AGENT_HQ_PORT ?? 4317),
     dev: argv.includes('--dev'),

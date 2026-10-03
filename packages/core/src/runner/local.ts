@@ -31,6 +31,8 @@ function slug(s: string) {
 export class LocalRunner implements Runner {
   readonly userId: ID;
   private readonly dataDir: string;
+  /** Where managed Claude account dirs live (machine-wide on the host; the runner's own data dir with `join`). */
+  private readonly accountsRoot: string;
   private readonly adapters: Map<string, AgentAdapter>;
   private readonly resolveRepo: (project: Project) => Promise<Workspace>;
   private readonly remote: boolean;
@@ -40,6 +42,8 @@ export class LocalRunner implements Runner {
   constructor(opts: {
     userId: ID;
     dataDir: string;
+    /** Root of <root>/claude-accounts; defaults to dataDir. */
+    accountsRoot?: string;
     adapters: AgentAdapter[];
     resolveRepo: (project: Project) => Promise<Workspace>;
     remote: boolean;
@@ -48,6 +52,7 @@ export class LocalRunner implements Runner {
   }) {
     this.userId = opts.userId;
     this.dataDir = opts.dataDir;
+    this.accountsRoot = opts.accountsRoot ?? opts.dataDir;
     this.adapters = new Map(opts.adapters.map((a) => [a.kind, a]));
     this.resolveRepo = opts.resolveRepo;
     this.remote = opts.remote;
@@ -94,9 +99,9 @@ export class LocalRunner implements Runner {
       // The Claude account this agent runs on. Its sessions live in that
       // account's config dir, so a session started on another account is
       // copied over before resuming it.
-      const configDir = resolveConfigDir(this.dataDir, start.configDir);
+      const configDir = resolveConfigDir(this.accountsRoot, start.configDir);
       let resumeSessionId = task?.sessionId ?? null;
-      if (resumeSessionId && !ensureSessionInConfigDir(this.dataDir, resumeSessionId, configDir)) {
+      if (resumeSessionId && !ensureSessionInConfigDir(this.accountsRoot, resumeSessionId, configDir)) {
         onEvent({ type: 'transcript', kind: 'system', text: 'The previous conversation is not on this machine; starting a new one.' });
         resumeSessionId = null;
       }
@@ -163,15 +168,15 @@ export class LocalRunner implements Runner {
   // ------------------------------------------------------------------ Claude accounts
 
   accountStatus(configDirs: Array<string | null>): Promise<AccountStatus[]> {
-    return Promise.all(configDirs.map((dir) => accountStatus(this.dataDir, dir)));
+    return Promise.all(configDirs.map((dir) => accountStatus(this.accountsRoot, dir)));
   }
 
   accountLogin(_key: string, configDir: string, onEvent: (e: RunnerSessionEvent) => void): RunnerSession {
-    return startAccountLogin(this.dataDir, configDir, onEvent);
+    return startAccountLogin(this.accountsRoot, configDir, onEvent);
   }
 
   accountRemove(configDir: string, email: string | null): Promise<AccountRemoval> {
-    return removeAccount(this.dataDir, configDir, email);
+    return removeAccount(this.accountsRoot, configDir, email);
   }
 
   async handoff(project: Project, task: Task): Promise<HandoffResult> {
