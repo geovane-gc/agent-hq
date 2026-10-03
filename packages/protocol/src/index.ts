@@ -326,7 +326,7 @@ export interface TakeoverRequest {
   createdAt: number;
 }
 
-export interface Snapshot extends TycoonSnapshot {
+export interface Snapshot extends TycoonSnapshot, PlayerMailSnapshot {
   you: User;
   users: User[];
   /** Everyone's connected Claude accounts (metadata only). */
@@ -382,13 +382,14 @@ export type ServerEvent =
   | { type: 'terminal_exit'; code: number | null }
   /** Raw output of an agent's Claude Code terminal; sent to clients that opened it. */
   | { type: 'agent_terminal_output'; agentId: ID; data: string }
-  | TycoonEvent;
+  | TycoonEvent
+  | PlayerMailEvent;
 
 // ---------------------------------------------------------------- commands (client -> server)
 
 type AgentEditable = 'name' | 'role' | 'model' | 'instructions' | 'permissionMode' | 'floorId' | 'isManager' | 'integrations' | 'appearance';
 
-export interface Commands extends HostCommands {
+export interface Commands extends HostCommands, PlayerMailCommands {
   create_building: { args: { name: string; kind: BuildingKind; color?: string }; result: Building };
   update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color'>> }; result: Building };
   remove_building: { args: { id: ID }; result: null };
@@ -707,3 +708,75 @@ export interface LobbyMessage {
   type: 'lobby';
   offices: OfficeInfo[];
 }
+
+// ================================================================ player mail
+// Players write each other e-mail from the office computers. Messages live in
+// the office database on the host. Every participant has their own copy (read,
+// archived, deleted), and the host only ever sends a message to its sender and
+// recipients. Agent reports (`Mail` above) are shown in the same mail client.
+// Hooked in through `Snapshot extends PlayerMailSnapshot`, `ServerEvent |
+// PlayerMailEvent` and `Commands extends PlayerMailCommands`.
+
+export type PlayerMailFolder = 'inbox' | 'sent' | 'archive';
+
+/** One message, as one participant sees it. */
+export interface PlayerMail {
+  id: ID;
+  /** Id of the conversation's first message. */
+  threadId: ID;
+  fromUserId: ID;
+  toUserIds: ID[];
+  subject: string;
+  /** Plain text or light Markdown. */
+  body: string;
+  inReplyTo: ID | null;
+  createdAt: number;
+  /** Your copy: you sent it, or it was sent to you. */
+  sent: boolean;
+  received: boolean;
+  read: boolean;
+  archived: boolean;
+}
+
+/** A conversation in a folder listing: its latest message, without bodies. */
+export interface PlayerMailThread {
+  threadId: ID;
+  /** The subject of its first message you can see. */
+  subject: string;
+  /** Latest message you can see in it; `body` is empty (see `snippet`). */
+  latest: PlayerMail;
+  snippet: string;
+  /** Everyone who wrote or received a message in it (that you can see). */
+  participantIds: ID[];
+  count: number;
+  unread: number;
+}
+
+export interface PlayerMailSnapshot {
+  /** Only the count: folders and conversations are fetched on demand (list_player_mail, get_player_thread). */
+  playerMail: { unread: number };
+}
+
+export type PlayerMailEvent =
+  /** A message you sent or received. Only its participants get it. */
+  | { type: 'player_mail'; mail: PlayerMail; unread: number }
+  /** Your copies changed (read, archived or deleted), maybe from another tab. */
+  | { type: 'player_mail_changed'; unread: number };
+
+export interface PlayerMailCommands {
+  /** Conversations in one of your folders, newest first. Page with `before` = the last thread's `latest.createdAt`. */
+  list_player_mail: {
+    args: { folder: PlayerMailFolder; query?: string; before?: number | null; limit?: number };
+    result: { threads: PlayerMailThread[]; more: boolean };
+  };
+  /** Every message of a conversation you can see, oldest first. */
+  get_player_thread: { args: { threadId: ID }; result: PlayerMail[] };
+  /** To players of this office. A reply (`inReplyTo`) joins that conversation. */
+  send_player_mail: { args: { to: ID[]; subject: string; body: string; inReplyTo?: ID | null }; result: PlayerMail };
+  /** Marks a conversation read or unread, archives or unarchives it (your copy only). */
+  update_player_mail: { args: { threadId: ID; read?: boolean; archived?: boolean }; result: null };
+  /** Deletes one message (`id`) or the whole conversation from your mailbox; the others keep theirs. */
+  delete_player_mail: { args: { threadId: ID; id?: ID | null }; result: null };
+}
+
+export type PlayerMailCommandName = keyof PlayerMailCommands;

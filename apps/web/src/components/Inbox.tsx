@@ -1,18 +1,11 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { ID, Mail, Snapshot } from '@agent-hq/protocol';
 import { client, run } from '../api.ts';
-import { Modal } from './Modal.tsx';
-import { BossTerminal } from './Terminal.tsx';
+import { ago, stamp } from '../format.ts';
+import { AgentPortrait } from './Portrait.tsx';
 
-// The boss computer: your inbox of reports from repo agents (everyone has
-// their own), plus the boss terminal for the office owner.
-
-const time = (ts: number) => {
-  const d = new Date(ts);
-  return d.toDateString() === new Date().toDateString()
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-};
+// Reports from repo agents (the balcony crew), shown in the mail client
+// (MailClient.tsx), and the small Markdown renderer mail bodies use.
 
 /** Inline Markdown: `code`, **bold**, *italic* and [links](https://…). */
 function inline(text: string): ReactNode[] {
@@ -78,7 +71,7 @@ function Thread({ world, mail }: { world: Snapshot; mail: Mail }) {
       <summary className="muted small-text">{earlier.length} earlier report{earlier.length > 1 ? 's' : ''} in this conversation</summary>
       {earlier.map((m) => (
         <div key={m.id} className="mail-earlier">
-          <div className="muted small-text">{time(m.createdAt)}</div>
+          <div className="muted small-text" title={stamp(m.createdAt)}>{stamp(m.createdAt)}</div>
           <Markdown text={m.body} />
         </div>
       ))}
@@ -86,7 +79,8 @@ function Thread({ world, mail }: { world: Snapshot; mail: Mail }) {
   );
 }
 
-function MailView(props: { world: Snapshot; mail: Mail; onOpenAgent: (id: ID) => void; onDeleted: () => void }) {
+/** An agent report: read it, reply to continue the conversation (the agent comes back to a desk). */
+export function MailView(props: { world: Snapshot; mail: Mail; onOpenAgent: (id: ID) => void; onDeleted: () => void }) {
   const { world, mail } = props;
   const agent = world.agents.find((a) => a.id === mail.fromAgentId);
   const project = world.projects.find((p) => p.id === agent?.repo?.projectId);
@@ -115,10 +109,13 @@ function MailView(props: { world: Snapshot; mail: Mail; onOpenAgent: (id: ID) =>
   const working = agent?.repo && agent.repo.location !== 'balcony' && agent.repo.invokedBy === world.you.id && agent.live;
   return (
     <article className="mail-view">
-      <header>
-        <h3 className="mail-subject">{mail.subject}</h3>
-        <div className="muted small-text">
-          From <strong>{agent?.name ?? 'an agent who left'}</strong>{project ? ` · ${project.name}` : ''} · {new Date(mail.createdAt).toLocaleString()}
+      <header className="report-head">
+        <AgentPortrait agent={agent} size={44} />
+        <div>
+          <h3 className="mail-subject">{mail.subject} <span className="tag-report">Agent report</span></h3>
+          <div className="muted small-text">
+            From <strong>{agent?.name ?? 'an agent who left'}</strong>{project ? ` · ${project.name}` : ''} · <time title={stamp(mail.createdAt)}>{stamp(mail.createdAt)} ({ago(mail.createdAt)})</time>
+          </div>
         </div>
       </header>
       <Thread world={world} mail={mail} />
@@ -141,64 +138,5 @@ function MailView(props: { world: Snapshot; mail: Mail; onOpenAgent: (id: ID) =>
         </div>
       </form>
     </article>
-  );
-}
-
-function Inbox(props: { world: Snapshot; initialMailId?: ID; onOpenAgent: (id: ID) => void }) {
-  const { world } = props;
-  const [selected, setSelected] = useState<ID | null>(props.initialMailId ?? world.mail[0]?.id ?? null);
-  const mail = world.mail.find((m) => m.id === selected) ?? null;
-  const agentName = (id: ID) => world.agents.find((a) => a.id === id)?.name ?? 'Former agent';
-  if (!world.mail.length) {
-    return (
-      <p className="muted mail-empty">
-        No reports yet. Summon one of the repo agents smoking on the balcony: when they finish, their report lands here, and you can
-        reply to keep the conversation going.
-      </p>
-    );
-  }
-  return (
-    <div className="inbox">
-      <ul className="mail-list">
-        {world.mail.map((m) => (
-          <li key={m.id}>
-            <button className={`mail-item ${m.id === selected ? 'active' : ''} ${m.read ? '' : 'unread'}`} onClick={() => setSelected(m.id)}>
-              <span className="mail-from">{m.read ? '' : <span className="dot unread-dot" />}{agentName(m.fromAgentId)}<span className="muted small-text">{time(m.createdAt)}</span></span>
-              <span className="mail-item-subject">{m.subject}</span>
-              <span className="muted small-text mail-snippet">{m.body.replace(/[#*`_>-]/g, '').slice(0, 90)}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {mail ? (
-        <MailView key={mail.id} world={world} mail={mail} onOpenAgent={props.onOpenAgent} onDeleted={() => setSelected(null)} />
-      ) : (
-        <p className="muted mail-empty">Pick a report.</p>
-      )}
-    </div>
-  );
-}
-
-/** The computer in the boss room: everyone's own inbox, and the owner's terminal. */
-export function BossComputer(props: {
-  world: Snapshot;
-  initialMailId?: ID;
-  initialTab?: 'inbox' | 'terminal';
-  onClose: () => void;
-  onOpenAgent: (id: ID) => void;
-}) {
-  const [tab, setTab] = useState<'inbox' | 'terminal'>(props.initialTab === 'terminal' && props.world.terminalAvailable ? 'terminal' : 'inbox');
-  const unread = props.world.mail.filter((m) => !m.read).length;
-  const subtitle = tab === 'inbox' ? 'Reports from the balcony crew. Reply to keep the conversation going.' : 'Your private shell on the host';
-  return (
-    <Modal title="👑 Boss computer" subtitle={subtitle} onClose={props.onClose} wide>
-      <div className="tabs inline">
-        <button className={tab === 'inbox' ? 'active' : ''} onClick={() => setTab('inbox')}>📧 Inbox{unread ? ` (${unread})` : ''}</button>
-        {props.world.terminalAvailable && <button className={tab === 'terminal' ? 'active' : ''} onClick={() => setTab('terminal')}>⌨️ Terminal</button>}
-      </div>
-      {tab === 'inbox'
-        ? <Inbox world={props.world} initialMailId={props.initialMailId} onOpenAgent={(id) => { props.onClose(); props.onOpenAgent(id); }} />
-        : <BossTerminal embedded onClose={props.onClose} />}
-    </Modal>
   );
 }

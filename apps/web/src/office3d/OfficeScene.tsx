@@ -184,7 +184,7 @@ export function OfficeScene(props: {
             onBoard={props.onBoard}
             onElevator={props.onElevator}
             onTerminal={props.onTerminal}
-            unread={world.mail.filter((m) => !m.read).length}
+            unread={world.mail.filter((m) => !m.read).length + world.playerMail.unread}
             balcony={balcony}
           />
           {balcony && (

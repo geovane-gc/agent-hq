@@ -10,6 +10,7 @@ import type {
   TakeoverRequest,
   TranscriptEntry,
 } from '@agent-hq/protocol';
+import { notify } from './notify.ts';
 
 export type ConnectionState = 'connecting' | 'open' | 'closed' | 'unauthorized';
 
@@ -70,6 +71,7 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'presence_left': return { ...world, presence: world.presence.filter((p) => p.userId !== e.userId) };
     case 'mail': return { ...world, mail: upsert(world.mail, e.mail).sort((a, b) => b.createdAt - a.createdAt) };
     case 'ledger': return { ...world, economy: e.economy };
+    case 'player_mail': case 'player_mail_changed': return { ...world, playerMail: { unread: e.unread } };
     default: return world;
   }
 }
@@ -142,6 +144,8 @@ class Client {
       const e = msg.event;
       // Tycoon: lets the finance UI celebrate revenue (see components/Finance.tsx).
       if (e.type === 'ledger') window.dispatchEvent(new CustomEvent('hq-ledger', { detail: e.entry }));
+      // Player mail: the mail client refreshes, notifications announce new messages (see MailClient.tsx).
+      if (e.type === 'player_mail' || e.type === 'player_mail_changed') window.dispatchEvent(new CustomEvent('hq-player-mail', { detail: e }));
       if (e.type === 'transcript') {
         const list = this.state.transcripts[e.entry.agentId];
         if (list) this.set({ transcripts: { ...this.state.transcripts, [e.entry.agentId]: [...list, e.entry] } });
@@ -172,7 +176,8 @@ class Client {
     const agent = world.agents.find((a) => a.id === t.agentId)?.name ?? 'the agent';
     const owner = world.users.find((u) => u.id === t.ownerId)?.name ?? 'Its owner';
     const text = t.status === 'approved' ? `${owner} approved: ${agent} now works on your account.` : `${owner} declined your request to take over ${agent}.`;
-    window.dispatchEvent(new CustomEvent(t.status === 'approved' ? 'hq-notice' : 'hq-error', { detail: text }));
+    if (t.status === 'approved') notify({ icon: '⇄', title: 'Takeover', text });
+    else window.dispatchEvent(new CustomEvent('hq-error', { detail: text }));
   }
 
   request<K extends CommandName>(command: K, args: Commands[K]['args']): Promise<Commands[K]['result']> {
