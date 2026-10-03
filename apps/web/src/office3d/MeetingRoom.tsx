@@ -7,6 +7,7 @@ import { StyledWall } from './decor/RoomStyle.tsx';
 import { Label } from './Label.tsx';
 import { WALL_HEIGHT, type MeetingRoom as MeetingLayout, type WallMount } from './layout.ts';
 import { Model } from './models.tsx';
+import { DECAL } from './textures.ts';
 
 const CUTAWAY_H = 0.25;
 
@@ -64,7 +65,7 @@ function WallScreen(props: { mount: WallMount; stream: MediaStream | null; capti
       </mesh>
       <mesh position={[0, 0, 0.006]}>
         <planeGeometry args={[mount.width, mount.height]} />
-        <meshBasicMaterial color={props.stream ? '#000000' : '#151b26'} toneMapped={false} />
+        <meshBasicMaterial color={props.stream ? '#000000' : '#151b26'} toneMapped={false} {...DECAL} />
       </mesh>
       {props.stream && <VideoPlane stream={props.stream} width={mount.width} height={mount.height} />}
       {props.caption && (

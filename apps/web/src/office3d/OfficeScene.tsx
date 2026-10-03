@@ -23,6 +23,16 @@ import { Workstation } from './Workstation.tsx';
 const MONITOR_EYE: Vec3 = [0, 1.16, -0.28];
 const MONITOR_SCREEN: Vec3 = [0, 1.15, -0.72];
 
+/**
+ * How close the camera draws, per mode. The depth buffer spends most of its
+ * precision right in front of the near plane, so a tiny one (it was 3 cm)
+ * leaves too little across the room: faces a millimeter apart (a screen in its
+ * bezel, a print in its frame) trade places from frame to frame and shimmer as
+ * the camera moves. The overview never gets closer to anything than the 44 cm
+ * monitor zoom; walking keeps 28 cm from walls and furniture.
+ */
+const NEAR: Record<CameraMode, number> = { iso: 0.25, first: 0.1 };
+
 type Phase = 'free' | 'zoom-in' | 'focused' | 'zoom-out';
 
 /**
@@ -181,7 +191,7 @@ export function OfficeScene(props: {
     <div className="scene">
       <HtmlLayer.Provider value={htmlLayer}>
       <LabelScale.Provider value={props.mode === 'first' ? 0.35 : 1}>
-      <Canvas shadows dpr={[1, 2]} camera={{ fov: props.mode === 'first' ? 70 : 42, near: 0.03, far: 200 }} key={props.mode}>
+      <Canvas shadows dpr={[1, 2]} camera={{ fov: props.mode === 'first' ? 70 : 42, near: NEAR[props.mode], far: 200 }} key={props.mode}>
         <SceneLighting preset={floor.theme.lighting} firstPerson={props.mode === 'first'} plan={plan} span={span} />
         <Suspense fallback={null}>
         <group onClick={onClick} onPointerMove={onPointerMove} onPointerOut={() => { document.body.style.cursor = ''; setHover(null); }}>
@@ -274,7 +284,8 @@ export function OfficeScene(props: {
           {!locked && (
             <button className="fp-enter" onClick={() => lockRef.current?.()}>
               Click to walk around<br />
-              <small>WASD to move · Shift to run · mouse to look · click to use · Esc to release</small>
+              <small>WASD to move · Shift to run · mouse to look · click to use · Esc to release</small><br />
+              <small className="fp-hint">Mouse sensitivity: Settings → Controls</small>
             </button>
           )}
         </>

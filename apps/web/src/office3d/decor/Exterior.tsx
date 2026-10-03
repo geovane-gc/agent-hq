@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { Building } from '@agent-hq/protocol';
-import { canvasTexture } from '../textures.ts';
+import { canvasTexture, DECAL } from '../textures.ts';
 import { facadeLook, tiled } from './textures.ts';
 
 // Building exteriors on the campus: the facade material (tinted by the
@@ -69,7 +69,7 @@ export function RooftopSign({ text, color, y }: { text: string; color: string; y
       </mesh>
       <mesh position={[0, 0.72, 0.051]}>
         <planeGeometry args={[3.6, 0.66]} />
-        <meshBasicMaterial map={map} toneMapped={false} />
+        <meshBasicMaterial map={map} toneMapped={false} {...DECAL} />
       </mesh>
     </group>
   );
