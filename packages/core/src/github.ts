@@ -64,7 +64,8 @@ export async function requireGithubOrigin(dir: string): Promise<{ remoteUrl: str
   const root = await repoRoot(dir);
   if (!root) throw new Error(`${dir} is not a git repository. Clone your GitHub repository there, or choose "Create a new GitHub repository".`);
   if (root !== realpathSync(dir)) throw new Error(`${dir} is inside the repository at ${root}. Choose the repository's root folder.`);
-  const origin = await run('git', ['remote', 'get-url', 'origin'], { cwd: dir }).catch(() => '');
+  // The configured URL, before any `url.<base>.insteadOf` rewriting (which `remote get-url` applies).
+  const origin = await run('git', ['config', '--get', 'remote.origin.url'], { cwd: dir }).catch(() => '');
   if (!origin) {
     throw new Error(`${dir} has no "origin" remote. Add your GitHub repository with \`git remote add origin https://github.com/<owner>/<repo>.git\`, or choose "Create a new GitHub repository".`);
   }

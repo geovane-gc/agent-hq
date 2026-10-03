@@ -57,6 +57,8 @@ export function StatusCard(props: {
 }) {
   const { floor, building } = props;
   const counts = countBy(props.agents);
+  // Repo agents live on the balcony: they don't take desks.
+  const seated = props.agents.filter((a) => a.kind !== 'repo').length;
   return (
     <section className="status-card" aria-label="Status">
       <button
@@ -72,7 +74,7 @@ export function StatusCard(props: {
             <span className="place-text">
               <span className="eyebrow">
                 {building ? `${BUILDING_ICON[building.kind]} ${building.name}` : 'Agent HQ'}
-                <span title={`${props.agents.length} of ${floor.desks} desks taken`}> · {props.agents.length}/{floor.desks} desks</span>
+                <span title={`${seated} of ${floor.desks} desks taken`}> · {seated}/{floor.desks} desks</span>
               </span>
               <strong>{floor.name}</strong>
             </span>
@@ -289,7 +291,9 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
       };
     });
 
-  const visible = [...approvals.filter((n) => !dismissed.has(n.id)), ...events];
+  // A mail card goes away once that report is read.
+  const unreadMail = new Set(world.mail.filter((m) => !m.read).map((m) => `mail-${m.id}`));
+  const visible = [...approvals.filter((n) => !dismissed.has(n.id)), ...events.filter((n) => !n.id.startsWith('mail-') || unreadMail.has(n.id))];
   if (!visible.length) return null;
   return (
     <div className="notes" aria-live="polite">
