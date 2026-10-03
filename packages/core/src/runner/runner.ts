@@ -1,5 +1,5 @@
 import type { ID, Project, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
-import type { AccountStatus } from '../accounts.ts';
+import type { AccountRemoval, AccountStatus } from '../accounts.ts';
 import type { PermissionDecision } from '../adapters/adapter.ts';
 import type { RepoAgentDef } from '../repo-agents.ts';
 import type { HandoffResult } from '../git.ts';
@@ -29,8 +29,8 @@ export interface Runner {
   accountStatus(configDirs: Array<string | null>): Promise<AccountStatus[]>;
   /** `claude auth login` for an account's config dir, as a terminal ('pty' events, then 'exit'). */
   accountLogin(key: string, configDir: string, onEvent: (e: RunnerSessionEvent) => void): RunnerSession;
-  /** Deletes an account's config dir on this machine. */
-  accountRemove(configDir: string): Promise<void>;
+  /** Logs an account out (when its email checks out) and deletes its config dir on this machine. */
+  accountRemove(configDir: string, email: string | null): Promise<AccountRemoval>;
   /** Commits the task's uncommitted work and pushes its branch, before someone else takes it over. */
   handoff(project: Project, task: Task): Promise<HandoffResult>;
 }

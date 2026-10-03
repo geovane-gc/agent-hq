@@ -17,6 +17,7 @@ import type {
   RunnerSessionEvent,
   ServerEvent,
   Snapshot,
+  TakeoverRequest,
   Task,
   TranscriptEntry,
   User,
@@ -312,6 +313,7 @@ export class Orchestrator {
       settings: this.store.settings,
       rateLimits: this.store.rateLimits.get(you.id) ?? null,
       presence: [...this.presence.values()],
+      takeovers: this.store.all('takeover'),
       terminalAvailable: you.role === 'owner' && actor.kind === 'user',
     };
   }
@@ -364,6 +366,36 @@ export class Orchestrator {
       throw new Error(`${agent.name} runs on ${who?.name ?? 'someone else'}'s Claude account, so only they can type into it. Use "Take over" to continue this work on your own account.`);
     }
     return agent;
+  }
+
+  /** The player whose Claude account runs an agent (and pays for its work). */
+  private runsFor(agent: Agent): ID {
+    return this.accountOf(agent)?.userId ?? agent.ownerId;
+  }
+
+  /** Whose account a piece of work is handed out from: the player, or for a coordinator agent the player its account belongs to. */
+  private assignerOf(user: User, actor: Actor): ID {
+    const coordinator = actor.kind === 'agent' ? this.store.get('agent', actor.agentId) : undefined;
+    return coordinator ? this.runsFor(coordinator) : user.id;
+  }
+
+  /** Whose task an open board task is, for auto-dispatch: its creator, or the account behind a coordinator that created it. */
+  private taskOwner(task: Task): ID | null {
+    if (this.store.get('user', task.createdBy)) return task.createdBy;
+    const coordinator = this.store.get('agent', task.createdBy);
+    return coordinator ? this.runsFor(coordinator) : null;
+  }
+
+  /**
+   * Board work runs on the assignee's Claude account, so you may only hand
+   * it to agents running on yours (a coordinator: on its own player's account).
+   */
+  private assertCanAssign(agent: Agent, assignerId: ID, actor: Actor) {
+    if (this.runsFor(agent) === assignerId) return;
+    const who = this.store.get('user', this.runsFor(agent))?.name ?? 'another player';
+    throw new Error(actor.kind === 'agent'
+      ? `${agent.name} runs on ${who}'s Claude account; you can only delegate to agents on the same account as you.`
+      : `${agent.name} runs on ${who}'s Claude account, so you can't give it work. Pick one of your agents, or take ${agent.name} over to continue on your own account.`);
   }
 
   private canDrive(agent: Agent, user: User): boolean {
@@ -451,6 +483,90 @@ export class Orchestrator {
       this.store.patch('agent', agent.id, { status: this.runnerFor(next) ? 'idle' : 'offline', activity: null });
     }
     return this.store.require('agent', agent.id);
+  }
+
+  /** Announces a decided takeover request, then drops it. */
+  private closeTakeover(request: TakeoverRequest, status: TakeoverRequest['status']) {
+    if (!this.store.get('takeover', request.id)) return;
+    this.store.patch('takeover', request.id, { status });
+    this.store.remove('takeover', request.id);
+  }
+
+  /**
+   * Moves an agent's work onto `user`'s machine and account:
+   * 1. stop the session on the previous owner's machine;
+   * 2. with a task branch, commit uncommitted work as WIP and push it there (aborts if that fails);
+   * 3. reassign the agent (owner, account and, for a repo agent, who gets its report);
+   * 4. continue in a new session on the new machine with a handoff summary: the task
+   *    (its branch is fetched from origin), or the run that was in progress.
+   */
+  private async takeOver(agent: Agent, user: User, accountId: ID | null): Promise<Agent> {
+    const agentId = agent.id;
+    const account = this.pickAccount(user.id, accountId);
+    if (!this.runnerOf(user.id)) throw new Error(`${user.name}'s machine is not connected`);
+    if (this.starting.has(agentId)) throw new Error(`${agent.name} is busy`);
+    const current = agent.currentTaskId ? this.store.get('task', agent.currentTaskId) : undefined;
+    const task = current && current.status !== 'done' && current.status !== 'failed' ? current : undefined;
+    const project = task ? this.store.require('project', task.projectId) : null;
+    if (task?.branch && project && !project.remoteUrl) {
+      throw new Error(`${project.name} has no git origin, so its branch can't move to another machine. Add an origin (e.g. GitHub) first.`);
+    }
+    // Without a task, carry over a run in progress (e.g. a repo agent working at a desk).
+    const live = this.sessions.get(agentId);
+    const running = !task && (
+      (!!live && (agent.status === 'working' || agent.status === 'awaiting_approval'))
+      // A repo agent walking back to the balcony has already delivered its report: nothing to carry over.
+      || (agent.kind === 'repo' && (agent.repo?.location === 'to_desk' || agent.repo?.location === 'desk')));
+
+    const from = this.store.get('user', agent.ownerId);
+    this.starting.add(agentId); // keeps dispatch away during the handoff
+    let handoff: HandoffResult | null = null;
+    try {
+      await this.endSession(agentId);
+      const source = this.runnerFor(agent);
+      if (task && project && source) {
+        if (task.branch) this.log(agentId, task.id, 'system', `${user.name} is taking over: saving and pushing ${task.branch}…`);
+        try {
+          handoff = await source.handoff(project, task);
+          if (handoff.error && task.branch && !handoff.pushed) throw new Error(handoff.error);
+        } catch (err) {
+          // Nothing moved: the agent stays with its owner, stopped.
+          this.store.patch('agent', agentId, { status: 'idle', activity: null });
+          this.log(agentId, task.id, 'error', `Takeover by ${user.name} failed: ${(err as Error).message}`);
+          throw new Error(`Could not hand off ${task.branch ?? task.title} from ${from?.name ?? 'the previous owner'}'s machine: ${(err as Error).message}`);
+        }
+        // The worktree there is clean now; free it.
+        if (task.worktreePath) await source.cleanup(project, task).catch(() => false);
+      }
+      this.store.patch('agent', agentId, {
+        ownerId: user.id, accountId: account?.id ?? null, status: 'idle', activity: null, live: false,
+        // A repo agent's report (mail) for this run now goes to the new owner.
+        ...(agent.repo ? { repo: { ...agent.repo, invokedBy: user.id } } : {}),
+      });
+      if (task) this.store.patch('task', task.id, { assigneeId: agentId, sessionId: null, worktreePath: null });
+      // Other work queued for it was handed out on the previous owner's account: back to the open board.
+      for (const t of this.store.all('task')) {
+        if (t.assigneeId === agentId && t.id !== task?.id && t.status !== 'done') {
+          this.store.patch('task', t.id, { assigneeId: null, ...(t.status === 'in_progress' ? { status: 'todo' as const } : {}) });
+        }
+      }
+      for (const r of this.store.all('takeover')) if (r.agentId === agentId && r.status === 'pending' && r.requesterId !== user.id) this.closeTakeover(r, 'cancelled');
+      this.log(agentId, task?.id ?? null, 'system',
+        `${user.name} took over ${agent.name}${from ? ` from ${from.name}` : ''}; it now runs on ${user.name}'s Claude account.`);
+    } finally {
+      this.starting.delete(agentId);
+    }
+    if (task || running) {
+      const next = this.store.require('agent', agentId);
+      const freshTask = task ? this.store.require('task', task.id) : null;
+      const prompt = handoffPrompt({
+        agent: next, task: freshTask, fromName: from?.name ?? 'a teammate', toName: user.name, transcript: this.db.transcript(agentId, 400), handoff,
+      });
+      const resume = freshTask ? this.startTask(next, freshTask, prompt) : this.openSession(next, null, prompt);
+      await resume.catch((err) => this.log(agentId, task?.id ?? null, 'error', `Could not continue after the takeover: ${err.message}`));
+    }
+    this.dispatch();
+    return this.store.require('agent', agentId);
   }
 
   private readonly handlers: {
@@ -625,6 +741,7 @@ export class Orchestrator {
       for (const t of this.store.all('task')) {
         if (t.assigneeId === id && t.status !== 'done') this.store.patch('task', t.id, { assigneeId: null, status: t.status === 'in_progress' ? 'todo' : t.status });
       }
+      for (const r of this.store.all('takeover').filter((x) => x.agentId === id)) this.store.remove('takeover', r.id);
       this.store.remove('agent', id);
       this.dispatch();
       return null;
@@ -634,6 +751,7 @@ export class Orchestrator {
     create_task: ({ projectId, title, description, assigneeId }, user, actor) => {
       this.store.require('project', projectId);
       if (assigneeId && isRepo(this.store.require('agent', assigneeId))) throw new Error('Repo agents only work when summoned from the balcony');
+      if (assigneeId) this.assertCanAssign(this.store.require('agent', assigneeId), this.assignerOf(user, actor), actor);
       const now = Date.now();
       const task = this.store.put('task', {
         id: randomUUID(), projectId, title: requireText(title, 'title'), description: description ?? '',
@@ -648,13 +766,14 @@ export class Orchestrator {
       return task;
     },
 
-    update_task: async ({ id, patch }) => {
+    update_task: async ({ id, patch }, user, actor) => {
       const before = this.store.require('task', id);
+      // Reopening work for an agent that now runs on someone else's account puts it back on the open board.
       const assignee = before.assigneeId ? this.store.get('agent', before.assigneeId) : undefined;
-      if (assignee && isRepo(assignee) && (patch.status === 'todo' || patch.status === 'in_progress') && patch.status !== before.status) {
-        throw new Error(`To continue with ${assignee.name}, reply to their report in your inbox`);
-      }
-      const task = this.store.patch('task', id, patch);
+      const reopened = (patch.status === 'todo' || patch.status === 'in_progress') && patch.status !== before.status;
+      if (reopened && assignee && isRepo(assignee)) throw new Error(`To continue with ${assignee.name}, reply to their report in your inbox`);
+      const unassign = reopened && assignee && this.runsFor(assignee) !== this.assignerOf(user, actor) && assignee.currentTaskId !== id;
+      const task = this.store.patch('task', id, unassign ? { ...patch, status: 'todo', assigneeId: null } : patch);
       if (patch.status && patch.status !== before.status && (patch.status === 'done' || patch.status === 'failed')) {
         await this.closeTask(task);
       }
@@ -669,11 +788,12 @@ export class Orchestrator {
       return null;
     },
 
-    assign_task: async ({ taskId, agentId }) => {
+    assign_task: async ({ taskId, agentId }, user, actor) => {
       const task = this.store.require('task', taskId);
       const agent = this.store.require('agent', agentId);
       if (isRepo(agent)) throw new Error('Repo agents only work when summoned from the balcony');
       if (task.status === 'done') throw new Error('Task is already done');
+      this.assertCanAssign(agent, this.assignerOf(user, actor), actor);
       if (!this.isAvailable(agent, true)) {
         // Queue it: the agent picks it up as soon as it's free.
         return this.store.patch('task', taskId, { assigneeId: agentId, status: 'todo' });
@@ -801,9 +921,14 @@ export class Orchestrator {
       for (const agent of this.store.all('agent').filter((a) => a.accountId === id)) await this.applyAccount(agent, null);
       await this.logins.get(id)?.session.close();
       this.logins.delete(id);
-      await this.runnerOf(user.id)?.accountRemove(account.configDir).catch(() => {});
+      const revoke = 'Credentials may remain on your machine; revoke the session at claude.ai (Settings → Account).';
+      const runner = this.runnerOf(user.id);
+      const outcome = runner
+        ? await runner.accountRemove(account.configDir, account.email)
+          .catch((err) => ({ loggedOut: false, warning: `Could not remove the login on your machine: ${(err as Error).message}. ${revoke}` }))
+        : { loggedOut: false, warning: `Your machine is offline, so the login there was not removed. ${revoke}` };
       this.store.remove('account', id);
-      return null;
+      return outcome;
     },
 
     set_agent_account: ({ agentId, accountId }, user) => {
@@ -814,60 +939,53 @@ export class Orchestrator {
 
     take_over_agent: async ({ agentId, accountId }, user) => {
       const agent = this.store.require('agent', agentId);
-      if (agent.kind === 'repo') throw new Error(`${agent.name} is a repo agent: invoke it on your own account instead`);
-      if (agent.ownerId === user.id) throw new Error(`${agent.name} already works on your account; switch accounts on their computer instead`);
-      const target = this.runnerOf(user.id);
-      if (!target) throw new Error('Your machine is not connected: start your runner first (Team → Run your agents)');
-      const account = this.pickAccount(user.id, accountId);
-      if (this.starting.has(agentId)) throw new Error(`${agent.name} is busy`);
-      const current = agent.currentTaskId ? this.store.get('task', agent.currentTaskId) : undefined;
-      const task = current && current.status !== 'done' && current.status !== 'failed' ? current : undefined;
-      const project = task ? this.store.require('project', task.projectId) : null;
-      if (task?.branch && project && !project.remoteUrl) {
-        throw new Error(`${project.name} has no git origin, so its branch can't move to your machine. Add an origin (e.g. GitHub) first.`);
+      const ownerId = this.runsFor(agent);
+      if (ownerId === user.id) throw new Error(`${agent.name} already works on your account; switch accounts on their computer instead`);
+      if (!this.runnerOf(user.id)) throw new Error('Your machine is not connected: start your runner first (Team → Run your agents)');
+      this.pickAccount(user.id, accountId);
+      if (this.store.settings.takeoverPolicy === 'free') {
+        return { agent: await this.takeOver(agent, user, accountId ?? null), request: null };
       }
+      // Ask the player whose account runs the agent; it stays pending while they are away.
+      const existing = this.store.all('takeover').find((r) => r.agentId === agentId && r.requesterId === user.id && r.status === 'pending');
+      if (existing) return { agent, request: existing };
+      const request = this.store.put('takeover', {
+        id: randomUUID(), agentId, requesterId: user.id, ownerId, accountId: accountId ?? null, status: 'pending', createdAt: Date.now(),
+      });
+      const owner = this.store.get('user', ownerId);
+      this.log(agentId, agent.currentTaskId, 'system', `${user.name} asked to take over ${agent.name}; waiting for ${owner?.name ?? 'its owner'} to approve.`);
+      return { agent, request };
+    },
 
-      const from = this.store.get('user', agent.ownerId);
-      this.starting.add(agentId); // keeps dispatch away during the handoff
-      let handoff: HandoffResult | null = null;
-      try {
-        // 1. Stop the session on the previous owner's machine and account.
-        await this.endSession(agentId);
-        // 2. Save and publish its work: WIP commit + push of the task branch.
-        const source = this.runnerFor(agent);
-        if (task && project && source) {
-          if (task.branch) this.log(agentId, task.id, 'system', `${user.name} is taking over: saving and pushing ${task.branch}…`);
-          try {
-            handoff = await source.handoff(project, task);
-            if (handoff.error && task.branch && !handoff.pushed) throw new Error(handoff.error);
-          } catch (err) {
-            // Nothing moved: the agent stays with its owner, stopped.
-            this.store.patch('agent', agentId, { status: 'idle', activity: null });
-            this.log(agentId, task.id, 'error', `Takeover by ${user.name} failed: ${(err as Error).message}`);
-            throw new Error(`Could not hand off ${task.branch ?? task.title} from ${from?.name ?? 'the previous owner'}'s machine: ${(err as Error).message}`);
-          }
-          // The worktree there is clean now; free it.
-          if (task.worktreePath) await source.cleanup(project, task).catch(() => false);
-        }
-        // 3. The agent now works for you, on your account.
-        this.store.patch('agent', agentId, { ownerId: user.id, accountId: account?.id ?? null, status: 'idle', activity: null, live: false });
-        if (task) this.store.patch('task', task.id, { assigneeId: agentId, sessionId: null, worktreePath: null });
-        this.log(agentId, task?.id ?? null, 'system',
-          `${user.name} took over ${agent.name}${from ? ` from ${from.name}` : ''}; it now runs on ${user.name}'s Claude account.`);
-      } finally {
-        this.starting.delete(agentId);
+    respond_takeover: async ({ id, approve }, user) => {
+      const request = this.store.require('takeover', id);
+      if (request.status !== 'pending') throw new Error('That request was already decided');
+      const agent = this.store.get('agent', request.agentId);
+      if (!agent || this.runsFor(agent) !== request.ownerId) {
+        this.closeTakeover(request, 'cancelled');
+        throw new Error('That agent changed hands; the request no longer applies');
       }
-      // 4. Continue where it stopped, with a summary of the work so far.
-      if (task) {
-        const prompt = handoffPrompt({
-          agent, task: this.store.require('task', task.id), fromName: from?.name ?? 'a teammate', toName: user.name,
-          transcript: this.db.transcript(agentId, 400), handoff,
-        });
-        await this.startTask(this.store.require('agent', agentId), this.store.require('task', task.id), prompt)
-          .catch((err) => this.log(agentId, task.id, 'error', `Could not continue after the takeover: ${err.message}`));
+      if (request.ownerId !== user.id) {
+        throw new Error(`Only ${this.store.get('user', request.ownerId)?.name ?? 'the agent\'s owner'} can decide on this takeover`);
       }
-      this.dispatch();
-      return this.store.require('agent', agentId);
+      const requester = this.store.get('user', request.requesterId);
+      if (!approve || !requester) {
+        this.closeTakeover(request, 'denied');
+        this.log(agent.id, agent.currentTaskId, 'system', `${user.name} declined ${requester?.name ?? 'a'}'s takeover request.`);
+        return null;
+      }
+      if (!this.runnerOf(requester.id)) throw new Error(`${requester.name}'s machine is not connected; the request stays pending until it is`);
+      // A failure (e.g. the branch can't be pushed) leaves the request pending.
+      await this.takeOver(agent, requester, request.accountId && this.store.get('account', request.accountId) ? request.accountId : null);
+      this.closeTakeover(request, 'approved');
+      return null;
+    },
+
+    cancel_takeover: ({ id }, user) => {
+      const request = this.store.require('takeover', id);
+      if (request.requesterId !== user.id) throw new Error('Only the player who asked can cancel this request');
+      if (request.status === 'pending') this.closeTakeover(request, 'cancelled');
+      return null;
     },
 
     // ---- repo agents (balcony crew)
@@ -940,6 +1058,9 @@ export class Orchestrator {
       if (patch.maxAgents !== undefined && (!Number.isInteger(patch.maxAgents) || patch.maxAgents < 1 || patch.maxAgents > 100)) {
         throw new Error('maxAgents must be between 1 and 100');
       }
+      if (patch.takeoverPolicy !== undefined && patch.takeoverPolicy !== 'approval' && patch.takeoverPolicy !== 'free') {
+        throw new Error('takeoverPolicy must be "approval" or "free"');
+      }
       if (patch.integrations) {
         for (const i of patch.integrations) {
           requireText(i.id, 'integration id');
@@ -981,6 +1102,7 @@ export class Orchestrator {
         this.store.patch('agent', a.id, { ownerId: this.owner().id, accountId: null });
       }
       for (const inv of this.store.all('invite').filter((i) => i.usedBy === id)) this.store.remove('invite', inv.id);
+      for (const r of this.store.all('takeover').filter((x) => x.requesterId === id || x.ownerId === id)) this.store.remove('takeover', r.id);
       for (const acc of this.store.all('account').filter((a) => a.userId === id)) {
         await this.logins.get(acc.id)?.session.close();
         this.logins.delete(acc.id);
@@ -1025,8 +1147,10 @@ export class Orchestrator {
     for (const agent of this.store.all('agent').filter(isStaff)) {
       let next = this.isAvailable(agent, true) ? todo.find((t) => t.assigneeId === agent.id) : undefined;
       if (!next && this.store.settings.dispatchMode === 'auto' && this.isAvailable(agent)) {
-        // Coordinators plan and delegate; they don't grab open tasks themselves.
-        next = agent.isManager ? undefined : todo.find((t) => !t.assigneeId && this.store.get('project', t.projectId)?.floorId === agent.floorId);
+        // Coordinators plan and delegate, and repo agents only work when invoked: neither grabs open tasks.
+        // Only work of the player whose account runs the agent.
+        next = agent.isManager || agent.kind === 'repo' ? undefined : todo.find((t) => !t.assigneeId && this.store.get('project', t.projectId)?.floorId === agent.floorId
+          && this.taskOwner(t) === this.runsFor(agent));
       }
       if (!next) continue;
       todo.splice(todo.indexOf(next), 1);
@@ -1071,7 +1195,8 @@ export class Orchestrator {
       if (this.sessions.has(agent.id)) await this.endSession(agent.id);
       const project = task
         ? this.store.require('project', task.projectId)
-        : this.store.all('project').filter((p) => p.floorId === agent.floorId).sort((a, b) => a.createdAt - b.createdAt)[0] ?? null;
+        : (agent.repo ? this.store.get('project', agent.repo.projectId) : undefined)
+          ?? this.store.all('project').filter((p) => p.floorId === agent.floorId).sort((a, b) => a.createdAt - b.createdAt)[0] ?? null;
       const token = randomBytes(18).toString('base64url');
       this.agentTokens.set(token, agent.id);
       const integrations = this.store.settings.integrations.filter((i) => agent.integrations.includes(i.id));
@@ -1128,7 +1253,7 @@ export class Orchestrator {
       }
     }
     const project = this.store.get('project', task.projectId);
-    // A repo agent's worktree lives on the machine of whoever summoned it for this task.
+    // A repo agent's worktree lives on the machine of whoever last ran this task (see finishRepoRun).
     const runner = agent?.kind === 'repo' ? this.runnerOf(task.createdBy) : agent ? this.runnerFor(agent) : this.localRunner;
     if (project && task.worktreePath && runner && (await runner.cleanup(project, task))) {
       if (this.store.get('task', task.id)) this.store.patch('task', task.id, { worktreePath: null });
@@ -1404,7 +1529,10 @@ export class Orchestrator {
     if (error) parts.push(`**The run failed:** ${error}`);
     if (task.branch) parts.push(`---\nMy changes are on branch \`${task.branch}\`. Review them from the board; marking the task done removes the worktree and keeps the branch.`);
     this.deliverReport(agent, task, parts.filter(Boolean).join('\n\n'));
-    this.store.patch('task', task.id, { status: error ? 'failed' : agent.repo?.readOnly ? 'done' : 'review' });
+    // createdBy follows whoever ran it last (a takeover moves it): their machine holds the worktree.
+    this.store.patch('task', task.id, {
+      status: error ? 'failed' : agent.repo?.readOnly ? 'done' : 'review', createdBy: agent.repo?.invokedBy ?? task.createdBy,
+    });
     this.endSession(agent.id).catch(() => {});
     this.backToBalcony(agent.id);
     const xp = this.store.settings.gamification && !error ? agent.xp + XP_PER_TURN : agent.xp;

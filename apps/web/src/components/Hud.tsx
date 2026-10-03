@@ -235,8 +235,10 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
 
   useEffect(() => {
     const on = (e: Event) => push({ id: `err-${Date.now()}-${Math.random()}`, tone: 'error', icon: '⚠️', title: 'That didn’t work', text: String((e as CustomEvent).detail) }, 8000);
+    const notice = (e: Event) => push({ id: `notice-${Date.now()}-${Math.random()}`, tone: 'success', icon: '⇄', title: 'Takeover', text: String((e as CustomEvent).detail) }, 10000);
     window.addEventListener('hq-error', on);
-    return () => window.removeEventListener('hq-error', on);
+    window.addEventListener('hq-notice', notice);
+    return () => { window.removeEventListener('hq-error', on); window.removeEventListener('hq-notice', notice); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -38,6 +38,7 @@ function connect() {
         else if (e.type === 'task_removed') world.tasks = world.tasks.filter((t) => t.id !== e.id);
         else if (e.type === 'agent') world.agents = [...world.agents.filter((a) => a.id !== e.agent.id), e.agent];
         else if (e.type === 'agent_removed') world.agents = world.agents.filter((a) => a.id !== e.id);
+        else if (e.type === 'account') world.accounts = [...world.accounts.filter((a) => a.id !== e.account.id), e.account];
       }
     };
     ws.onerror = () => reject(new Error('Cannot reach Agent HQ'));
@@ -56,8 +57,16 @@ connect();
 
 // ------------------------------------------------------------------ tools
 
-const describeAgent = (a: Agent) =>
-  `- ${a.name} (${a.role}${a.isManager ? ', coordinator' : ''}) id=${a.id} status=${a.status}${a.activity ? ` — ${a.activity}` : ''}`;
+/** The player whose Claude account runs an agent: coordinators can only delegate within their own. */
+const runsFor = (a: Agent) => {
+  const picked = a.accountId ? world!.accounts.find((x) => x.id === a.accountId) : undefined;
+  return picked?.userId === a.ownerId ? picked.userId : a.ownerId;
+};
+const describeAgent = (a: Agent) => {
+  const me = world!.agents.find((x) => x.id === world!.you.id);
+  const other = manager && me && runsFor(a) !== runsFor(me) ? ' [runs on another player\'s Claude account: you cannot delegate to it]' : '';
+  return `- ${a.name} (${a.role}${a.isManager ? ', coordinator' : ''}) id=${a.id} status=${a.status}${a.activity ? ` — ${a.activity}` : ''}${other}`;
+};
 const describeTask = (t: Task, w: Snapshot) => {
   const who = w.agents.find((a) => a.id === t.assigneeId)?.name ?? 'unassigned';
   const project = w.projects.find((p) => p.id === t.projectId)?.name ?? '?';

@@ -6,6 +6,7 @@ import type {
   ServerEvent,
   ServerMessage,
   Snapshot,
+  TakeoverRequest,
   TranscriptEntry,
 } from '@agent-hq/protocol';
 
@@ -60,6 +61,8 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'user': return { ...world, users: upsert(world.users, e.user), you: e.user.id === world.you.id ? e.user : world.you };
     case 'account': return { ...world, accounts: upsert(world.accounts, e.account) };
     case 'account_removed': return { ...world, accounts: without(world.accounts, e.id) };
+    case 'takeover': return { ...world, takeovers: e.takeover.status === 'pending' ? upsert(world.takeovers, e.takeover) : without(world.takeovers, e.takeover.id) };
+    case 'takeover_removed': return { ...world, takeovers: without(world.takeovers, e.id) };
     case 'presence': return { ...world, presence: [...world.presence.filter((p) => p.userId !== e.presence.userId), e.presence] };
     case 'presence_left': return { ...world, presence: world.presence.filter((p) => p.userId !== e.userId) };
     case 'mail': return { ...world, mail: upsert(world.mail, e.mail).sort((a, b) => b.createdAt - a.createdAt) };
@@ -144,6 +147,7 @@ class Client {
       } else if (e.type === 'terminal_exit') {
         this.terminal.dispatchEvent(new CustomEvent('exit', { detail: e.code }));
       } else if (this.state.world) {
+        if (e.type === 'takeover') this.noticeTakeover(this.state.world, e.takeover);
         this.set({ world: applyEvent(this.state.world, e) });
       }
     } else if (msg.type === 'reply') {
@@ -152,6 +156,15 @@ class Client {
       if (msg.ok) p?.resolve(msg.result);
       else p?.reject(new Error(msg.error));
     }
+  }
+
+  /** Tells the requester how their takeover request ended. */
+  private noticeTakeover(world: Snapshot, t: TakeoverRequest) {
+    if (t.requesterId !== world.you.id || t.status === 'pending' || t.status === 'cancelled') return;
+    const agent = world.agents.find((a) => a.id === t.agentId)?.name ?? 'the agent';
+    const owner = world.users.find((u) => u.id === t.ownerId)?.name ?? 'Its owner';
+    const text = t.status === 'approved' ? `${owner} approved: ${agent} now works on your account.` : `${owner} declined your request to take over ${agent}.`;
+    window.dispatchEvent(new CustomEvent(t.status === 'approved' ? 'hq-notice' : 'hq-error', { detail: text }));
   }
 
   request<K extends CommandName>(command: K, args: Commands[K]['args']): Promise<Commands[K]['result']> {

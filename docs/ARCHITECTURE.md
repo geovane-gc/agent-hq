@@ -128,17 +128,31 @@ never interrupt a free conversation someone is watching. Tasks assigned to a bus
   player). The host only stores metadata: email, plan and logged-in state from `claude auth status --json`
   (`account_status` op), re-checked when a runner connects, after a login, on demand and every 10 minutes. An agent
   runs on one of its owner's accounts; switching restarts its session there and resumes it (the session file is copied
-  between config dirs on that machine).
+  between config dirs on that machine). Removing an account logs it out (`account_remove` op) and deletes its dir, with
+  guards: never the default login, only dirs under `claude-accounts/` (symlinks resolved), `claude` always runs with
+  `CLAUDE_CONFIG_DIR` set to that dir, and `claude auth logout` only runs when `claude auth status` in that dir reports
+  the same dir and the account's email. Otherwise the dir is still deleted and the player is warned that credentials
+  may remain (revoke at claude.ai).
 - **Input belongs to the account**: nobody may type into a Claude Code session running on someone else's account. The
   orchestrator checks it for terminal input, messages, interrupts and approvals, against the agent's owner, its account
   and the account the live session was started on. Everyone else can watch read-only.
-- **Takeover**: `take_over_agent` moves an agent's work to the caller's machine and account. The host stops the
+- **Work belongs to the account too**: board tasks can only be handed to agents running on the assigner's account
+  (`assign_task`, `create_task` with an assignee, a coordinator's MCP tools: the coordinator's own player's account).
+  Auto-dispatch gives an open task only to agents running on the account of whoever created it (for a task created by
+  a coordinator, its player), and repo agents never pick up open tasks.
+- **Takeover**: `take_over_agent` moves an agent's work to the caller's machine and account. With the boss's
+  `takeoverPolicy: 'approval'` (the default) it first files a `TakeoverRequest` that the player whose account runs the
+  agent approves or denies (`respond_takeover`); it stays pending while they are away and the requester can cancel it.
+  With `'free'` it happens at once. The host stops the
   session, asks the previous owner's runner to commit uncommitted work on the task branch as a WIP commit and push it
   (`handoff` op; aborted if the push fails), removes that worktree, then reassigns the agent (owner and account) and
   clears the task's session and worktree. The new runner fetches the branch from origin (fast-forwarding a stale local
   copy), creates its worktree and starts a fresh session whose prompt is a summary built from the transcript the host
   keeps (requests, files touched, last steps, last message) plus the agent's notes from the previous machine. If the
   previous machine is offline, whatever is already on origin carries over. Projects need a git origin for this.
+  Work queued for the agent on the old account goes back to the open board. Repo agents can be taken over too: a run
+  outside any task (e.g. read-only in the repo) restarts on the new machine from a summary of that run, and its report
+  goes to the new owner (`repo.invokedBy`).
 - **Presence**: players walking in first person broadcast their position and render as walking avatars; players in the
   overview are shown parked (the boss at the executive desk, others by the elevator).
 
