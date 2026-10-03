@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { Agent, Appearance, Building, BuildingKind, Floor, FloorMaterial, ID, PermissionMode, Snapshot } from '@agent-hq/protocol';
+import { COORDINATOR, MODELS } from '../agentUtil.ts';
 import { client } from '../api.ts';
+import { randomAgentName } from '../names.ts';
 import { FormModal } from './Modal.tsx';
 
 const str = (d: FormData, k: string) => String(d.get(k) ?? '').trim();
@@ -21,9 +23,9 @@ const HAIR_STYLES: Appearance['hairStyle'][] = ['short', 'long', 'bun', 'bald'];
 
 function Swatches(props: { colors: string[]; value: string; onChange: (c: string) => void }) {
   return (
-    <div className="swatches">
+    <div className="swatches" role="radiogroup">
       {props.colors.map((c) => (
-        <button type="button" key={c} className={`swatch ${c === props.value ? 'on' : ''}`} style={{ background: c }} onClick={() => props.onChange(c)} aria-label={c} />
+        <button type="button" key={c} role="radio" aria-checked={c === props.value} className={`swatch ${c === props.value ? 'on' : ''}`} style={{ background: c }} onClick={() => props.onChange(c)} aria-label={c} />
       ))}
     </div>
   );
@@ -41,7 +43,7 @@ export function LookPicker({ look, onChange }: { look: Appearance; onChange: (lo
         {HAIR_STYLES.map((s) => (
           <button type="button" key={s} className={`small ${look.hairStyle === s ? '' : 'ghost'}`} onClick={() => onChange({ ...look, hairStyle: s })}>{s}</button>
         ))}
-        <button type="button" className="small ghost" onClick={() => onChange(randomAppearance())}>🎲</button>
+        <button type="button" className="small ghost" onClick={() => onChange(randomAppearance())} aria-label="Random look" title="Random look">🎲</button>
       </div>
     </div>
   );
@@ -58,15 +60,19 @@ export function AgentModal(props: { world: Snapshot; floorId: ID; agent?: Agent;
   const [look, setLook] = useState<Appearance>(agent?.appearance ?? randomAppearance());
   const [integrations, setIntegrations] = useState<ID[]>(agent?.integrations ?? []);
   const toggle = (id: ID) => setIntegrations((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+  // New hires start with a suggestion; every name in the company counts as taken.
+  const taken = world.agents.filter((a) => a.id !== agent?.id).map((a) => a.name);
+  const [name, setName] = useState(() => agent?.name ?? randomAgentName(taken));
 
   return (
     <FormModal
       title={agent ? `Edit ${agent.name}` : 'Recruit an agent'}
+      subtitle={agent ? undefined : 'A Claude Code session with its own desk, worktree and memory.'}
       submitLabel={agent ? 'Save' : 'Hire'}
       onClose={props.onClose}
       onSubmit={(d) => {
         const fields = {
-          name: str(d, 'name'),
+          name: str(d, 'name') || randomAgentName(taken),
           role: str(d, 'role'),
           model: str(d, 'model') || null,
           instructions: str(d, 'instructions'),
@@ -81,48 +87,59 @@ export function AgentModal(props: { world: Snapshot; floorId: ID; agent?: Agent;
       }}
     >
       <div className="grid2">
-        <label>Name<input name="name" required autoFocus defaultValue={agent?.name} placeholder="Ada" /></label>
+        <label>Name
+          <span className="input-with-btn">
+            <input name="name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Leave empty for a random name" />
+            <button type="button" className="icon-btn" onClick={() => setName(randomAgentName([...taken, name]))} aria-label="Random name" title="Random name">🎲</button>
+          </span>
+        </label>
         <label>Role
           <input name="role" required list="roles" defaultValue={agent?.role} placeholder="Full-stack developer" />
           <datalist id="roles">{ROLE_PRESETS.map((r) => <option key={r} value={r} />)}</datalist>
         </label>
-        <label>Model<input name="model" defaultValue={agent?.model ?? ''} placeholder="Default (opus, sonnet, haiku…)" /></label>
-        <label>Permissions
-          <select name="permissionMode" defaultValue={agent?.permissionMode ?? 'manual'}>
-            {PERMISSION_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
-        </label>
       </div>
-      <label className="check">
-        <input type="checkbox" name="isManager" defaultChecked={agent?.isManager} />
-        Manager — plans work and delegates tasks to teammates through the board
-      </label>
       <fieldset>
         <legend>Look</legend>
-        <div className="look">
-          <span>Skin</span><Swatches colors={SKINS} value={look.skin} onChange={(skin) => setLook({ ...look, skin })} />
-          <span>Hair</span><Swatches colors={HAIRS} value={look.hair} onChange={(hair) => setLook({ ...look, hair })} />
-          <span>Shirt</span><Swatches colors={COLORS} value={look.shirt} onChange={(shirt) => setLook({ ...look, shirt })} />
-          <span>Style</span>
-          <div className="row">
-            {HAIR_STYLES.map((s) => (
-              <button type="button" key={s} className={`small ${look.hairStyle === s ? '' : 'ghost'}`} onClick={() => setLook({ ...look, hairStyle: s })}>{s}</button>
-            ))}
-            <button type="button" className="small ghost" onClick={() => setLook(randomAppearance())}>🎲</button>
-          </div>
-        </div>
+        <LookPicker look={look} onChange={setLook} />
       </fieldset>
-      <fieldset>
-        <legend>Integrations (optional MCP servers)</legend>
-        {world.settings.integrations.map((i) => (
-          <label key={i.id} className="check" title={i.setup}>
-            <input type="checkbox" checked={integrations.includes(i.id)} onChange={() => toggle(i.id)} />
-            <span><strong>{i.name}</strong> <span className="muted">— {i.description}</span></span>
+      <details className="advanced" open={!!agent}>
+        <summary>Advanced <span className="muted">· model, permissions, {COORDINATOR.label.toLowerCase()}, integrations, instructions</span></summary>
+          <div className="grid2">
+          <label>Model
+            <select name="model" defaultValue={agent?.model ?? ''}>
+              {MODELS.map((g) => (
+                <optgroup key={g.group} label={g.group}>
+                  {g.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </optgroup>
+              ))}
+              {/* Keep a model typed in before this list existed instead of silently dropping it. */}
+              {agent?.model && !MODELS.some((g) => g.options.some((o) => o.value === agent.model)) && (
+                <optgroup label="Current"><option value={agent.model}>{agent.model}</option></optgroup>
+              )}
+            </select>
           </label>
-        ))}
-        <p className="hint">Each integration may need setup on the machine that runs this agent. See Settings → Integrations.</p>
-      </fieldset>
-      <label>Instructions<textarea name="instructions" rows={3} defaultValue={agent?.instructions} placeholder="Extra guidance: style, focus areas, things to avoid…" /></label>
+          <label>Permissions
+            <select name="permissionMode" defaultValue={agent?.permissionMode ?? 'manual'}>
+              {PERMISSION_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </label>
+        </div>
+        <label className="check">
+          <input type="checkbox" name="isManager" defaultChecked={agent?.isManager} />
+          <span><strong>{COORDINATOR.label}</strong> <span className="muted">· {COORDINATOR.help}</span></span>
+        </label>
+        <fieldset>
+          <legend>Integrations (optional MCP servers)</legend>
+          {world.settings.integrations.map((i) => (
+            <label key={i.id} className="check" title={i.setup}>
+              <input type="checkbox" checked={integrations.includes(i.id)} onChange={() => toggle(i.id)} />
+              <span><strong>{i.name}</strong> <span className="muted">— {i.description}</span></span>
+            </label>
+          ))}
+          <p className="hint">Each integration may need setup on the machine that runs this agent. See Settings → Integrations.</p>
+        </fieldset>
+        <label>Instructions<textarea name="instructions" rows={3} defaultValue={agent?.instructions} placeholder="Extra guidance: style, focus areas, things to avoid…" /></label>
+      </details>
     </FormModal>
   );
 }
@@ -173,7 +190,7 @@ export function NewTaskModal(props: { world: Snapshot; projectIds: ID[]; assigne
       <label>Assignee
         <select name="assigneeId" defaultValue={props.assigneeId ?? ''}>
           <option value="">{props.world.settings.dispatchMode === 'auto' ? 'Anyone free on the floor (auto)' : 'Unassigned'}</option>
-          {props.world.agents.map((a) => <option key={a.id} value={a.id}>{a.name} — {a.role}{a.isManager ? ' (manager)' : ''}</option>)}
+          {props.world.agents.map((a) => <option key={a.id} value={a.id}>{a.name} — {a.role}{a.isManager ? ` (${COORDINATOR.label.toLowerCase()})` : ''}</option>)}
         </select>
       </label>
     </FormModal>
