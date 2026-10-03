@@ -119,7 +119,8 @@ npm run dev
 ```
 
 `npm run dev` opens the Agent HQ desktop app with hot reload. Electron is downloaded automatically on the first run, and
-closing the window stops everything.
+closing the window stops everything. After you pull changes, `npm run dev` and `npm start` run `npm install` themselves
+when dependencies changed, and the window restarts when `apps/desktop` changes.
 
 | Command | What it does |
 |---|---|
@@ -193,6 +194,10 @@ the proximity radius, the STUN servers (default: a public Google STUN server) an
 username, credential). Players behind strict NATs or corporate firewalls can't connect without TURN (for example
 [coturn](https://github.com/coturn/coturn)). The TURN credential stays on the host and is only handed to players when
 they join voice. Every player connects to every other one, which works well up to about 8 people in voice.
+
+On macOS, screen sharing needs the Screen Recording permission: **System Settings → Privacy & Security → Screen & System
+Audio Recording**, turn on Agent HQ (listed as **Electron** when run with `npm run dev`, or your browser), then restart
+it. The app offers to open that pane when the permission is missing.
 
 Integrations (MCP servers) are edited in **Settings → Integrations**. Each entry is a Claude Code `mcpServers` config
 plus the setup it needs (for example the Blender add-on or the Unity package).

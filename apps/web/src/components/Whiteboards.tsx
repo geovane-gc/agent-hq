@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
+import { Component, lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { ID, Snapshot, WhiteboardInfo } from '@agent-hq/protocol';
 import { run } from '../api.ts';
 import { ago, floorLabel, stamp } from '../format.ts';
@@ -24,6 +24,50 @@ const WhiteboardEditor = lazy(() => {
   window.EXCALIDRAW_ASSET_PATH = `${import.meta.env.BASE_URL}excalidraw-assets/`;
   return import('./WhiteboardEditor.tsx');
 });
+
+/**
+ * The editor's code couldn't be downloaded (as opposed to crashing once
+ * loaded). Browsers remember a failed module download until the page reloads.
+ */
+const isLoadError = (error: Error) =>
+  /dynamically imported module|importing a module script failed|failed to load module script|unable to preload css/i.test(error.message);
+
+/** A failed download or crash of the editor: say what to do, instead of taking the whole office down. */
+class EditorBoundary extends Component<{ children: ReactNode; onRetry: () => void }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('The whiteboard failed to load:', error);
+  }
+
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    const download = isLoadError(error);
+    const hint = !download
+      ? 'Something went wrong in the whiteboard editor.'
+      : import.meta.env.DEV
+        ? 'If you just updated Agent HQ, its dependencies may be missing: stop it, run npm install, then start it again (npm run dev).'
+        : 'Agent HQ may have been updated since this page was opened: reload the page.';
+    return (
+      <div className="wb-loading" role="alert">
+        <div className="wb-error">
+          <strong>The whiteboard failed to load</strong>
+          <p>{hint}</p>
+          <p className="muted small-text">{error.message}</p>
+          <div className="row">
+            {!download && <button className="small" onClick={this.props.onRetry}>Try again</button>}
+            <button className={download ? 'small' : 'small ghost'} onClick={() => location.reload()}>Reload the page</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
 
 const canManage = (world: Snapshot, board: WhiteboardInfo) => world.you.role === 'owner' || board.createdBy === world.you.id;
 
@@ -144,6 +188,7 @@ function WhiteboardList(props: { world: Snapshot; here: string | null; onClose: 
 function WhiteboardOverlay(props: { world: Snapshot; board: WhiteboardInfo | undefined; here: string | null; onClose: () => void; onList: () => void }) {
   const { world, board } = props;
   const boards = useWhiteboards();
+  const [attempt, setAttempt] = useState(0);
   return (
     // data-captures-keys: drawing shortcuts must not walk the player around (Controls.tsx).
     <div className="wb-overlay" role="dialog" aria-modal="true" aria-label={board ? `Whiteboard ${board.name}` : 'Whiteboard'} data-captures-keys>
@@ -168,9 +213,11 @@ function WhiteboardOverlay(props: { world: Snapshot; board: WhiteboardInfo | und
       </header>
       <div className="wb-canvas">
         {board ? (
-          <Suspense fallback={<div className="wb-loading">Loading the whiteboard…</div>}>
-            <WhiteboardEditor key={board.id} board={board} world={world} onRemoved={props.onClose} />
-          </Suspense>
+          <EditorBoundary key={`${board.id}:${attempt}`} onRetry={() => setAttempt((n) => n + 1)}>
+            <Suspense fallback={<div className="wb-loading">Loading the whiteboard…</div>}>
+              <WhiteboardEditor key={board.id} board={board} world={world} onRemoved={props.onClose} />
+            </Suspense>
+          </EditorBoundary>
         ) : (
           <div className="wb-loading">Opening…</div>
         )}
