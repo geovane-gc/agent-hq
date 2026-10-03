@@ -2,45 +2,13 @@ import { useMemo } from 'react';
 import { Label } from './Label.tsx';
 import { Model } from './models.tsx';
 import type { FloorTheme, Task } from '@agent-hq/protocol';
-import { fixtures, WALL_HEIGHT, type FloorPlan, type Rect } from './layout.ts';
+import { fixtures, meetingRoom, WALL_HEIGHT, windowSpots, type FloorPlan, type Rect } from './layout.ts';
 import type { Interactable } from './interact.ts';
-import { getCarpetTexture, getFloorTexture, getTilesTexture } from './textures.ts';
+import { Backdrop, ceilingColors, StyledFloor, StyledWall, useViewTexture } from './decor/RoomStyle.tsx';
+import type * as THREE from 'three';
 
 const WALL_H = WALL_HEIGHT;
 const CUTAWAY_H = 0.25;
-
-function FloorSurface({ plan, theme }: { plan: FloorPlan; theme: FloorTheme }) {
-  const w = plan.maxX - plan.minX;
-  const d = plan.maxZ - plan.minZ;
-  const texture = useMemo(() => {
-    const base = theme.floor === 'wood' ? getFloorTexture() : theme.floor === 'carpet' ? getCarpetTexture() : theme.floor === 'tiles' ? getTilesTexture() : null;
-    if (!base) return null;
-    const t = base.clone();
-    t.needsUpdate = true;
-    const scale = theme.floor === 'wood' ? 4 : 1.5;
-    t.repeat.set(w / scale, d / scale);
-    return t;
-  }, [theme.floor, w, d]);
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[plan.minX + w / 2, 0, plan.minZ + d / 2]} receiveShadow>
-      <planeGeometry args={[w, d]} />
-      <meshStandardMaterial map={texture} color={texture ? '#ffffff' : '#b7b6b0'} roughness={0.85} />
-    </mesh>
-  );
-}
-
-function Wall(props: { from: [number, number]; to: [number, number]; height: number; color: string; thickness?: number; y?: number }) {
-  const [x1, z1] = props.from;
-  const [x2, z2] = props.to;
-  const len = Math.hypot(x2 - x1, z2 - z1);
-  const angle = Math.atan2(z2 - z1, x2 - x1);
-  return (
-    <mesh position={[(x1 + x2) / 2, (props.y ?? 0) + props.height / 2, (z1 + z2) / 2]} rotation={[0, -angle, 0]} castShadow receiveShadow>
-      <boxGeometry args={[len, props.height, props.thickness ?? 0.15]} />
-      <meshStandardMaterial color={props.color} roughness={0.95} />
-    </mesh>
-  );
-}
 
 function Glass(props: { from: [number, number]; to: [number, number] }) {
   const [x1, z1] = props.from;
@@ -61,7 +29,7 @@ function Glass(props: { from: [number, number]; to: [number, number] }) {
   );
 }
 
-function Window({ x, z, rotation }: { x: number; z: number; rotation: number }) {
+function Window({ x, z, rotation, view }: { x: number; z: number; rotation: number; view: THREE.Texture }) {
   return (
     <group position={[x, 1.6, z]} rotation={[0, rotation, 0]}>
       <mesh>
@@ -70,7 +38,7 @@ function Window({ x, z, rotation }: { x: number; z: number; rotation: number }) 
       </mesh>
       <mesh position={[0, 0, 0.1]}>
         <planeGeometry args={[1.6, 1.2]} />
-        <meshBasicMaterial color="#a8d4ff" toneMapped={false} />
+        <meshBasicMaterial map={view} toneMapped={false} />
       </mesh>
       <mesh position={[0, 0, 0.11]}>
         <boxGeometry args={[0.05, 1.2, 0.02]} />
@@ -173,7 +141,7 @@ function BossRoom(props: { plan: FloorPlan; interact: Interactable; cutaway: boo
 }
 
 /** A ceiling with light panels over the desks, for the first-person view. */
-function Ceiling({ plan }: { plan: FloorPlan }) {
+function Ceiling({ plan, panel, ceiling }: { plan: FloorPlan; panel: string; ceiling: string }) {
   const w = plan.maxX - plan.minX;
   const d = plan.maxZ - plan.minZ;
   const panels: Array<[number, number]> = [];
@@ -184,12 +152,12 @@ function Ceiling({ plan }: { plan: FloorPlan }) {
     <group>
       <mesh position={[plan.minX + w / 2, WALL_H, plan.minZ + d / 2]} rotation={[Math.PI / 2, 0, 0]}>
         <planeGeometry args={[w, d]} />
-        <meshBasicMaterial color="#dfe3e8" />
+        <meshBasicMaterial color={ceiling} />
       </mesh>
       {panels.map(([x, z]) => (
         <mesh key={`${x},${z}`} position={[x, WALL_H - 0.02, z]} rotation={[Math.PI / 2, 0, 0]}>
           <planeGeometry args={[1.2, 0.6]} />
-          <meshBasicMaterial color="#fffdf5" toneMapped={false} />
+          <meshBasicMaterial color={panel} toneMapped={false} />
         </mesh>
       ))}
     </group>
@@ -207,53 +175,52 @@ export function Room(props: {
   onTerminal: (() => void) | null;
   /** Unread reports in your inbox, shown on the boss computer. */
   unread?: number;
-  /** The balcony outside the front wall, if this floor has one: that stretch of wall is glass. */
-  balcony?: Rect | null;
+  /** The balcony outside the front wall: that stretch of wall is glass. */
+  balcony: Rect;
 }) {
   const { plan, theme, balcony } = props;
   const f = fixtures(plan);
   const sideH = props.cutaway ? CUTAWAY_H : WALL_H;
-  const wall = theme.wallColor;
-  const windowsBack = useMemo(() => {
-    const xs: number[] = [];
-    for (let x = plan.boss.maxX + 6.2; x < plan.maxX - 3.4; x += 3.2) xs.push(x);
-    return xs;
-  }, [plan]);
-  const windowsLeft = useMemo(() => {
-    const zs: number[] = [];
-    for (let z = plan.minZ + 1.5; z < plan.maxZ - 1; z += 3) zs.push(z);
-    return zs;
-  }, [plan]);
+  const glass = theme.wall === 'glass';
+  const view = useViewTexture(theme);
+  // Glass walls have no windows: the whole wall is one.
+  const windows = useMemo(() => (glass ? { back: [], left: [] } : windowSpots(plan)), [plan, glass]);
+  // The meeting room's wall screen hangs on the left wall: glass walls stay solid behind it (windowSpots skips it too).
+  const meeting = useMemo(() => meetingRoom(plan), [plan]);
+  const solidTheme = useMemo(() => (glass ? { ...theme, wall: 'paint' as const } : theme), [theme, glass]);
 
   const terminal: Interactable = props.onTerminal
-    ? { label: 'Boss computer — inbox', action: props.onTerminal }
+    ? { label: 'Boss computer — mail', action: props.onTerminal }
     : { label: 'Boss computer', action: () => {} };
 
   return (
     <group>
-      <FloorSurface plan={plan} theme={theme} />
-      {!props.cutaway && <Ceiling plan={plan} />}
+      <StyledFloor plan={plan} theme={theme} />
+      {!props.cutaway && <Ceiling plan={plan} {...ceilingColors(theme)} />}
+      {glass && <Backdrop plan={plan} theme={theme} cutaway={props.cutaway} />}
       {/* back and left walls are always full height; front and right are cut away in the overview */}
-      <Wall from={[plan.minX, plan.minZ]} to={[plan.maxX, plan.minZ]} height={WALL_H} color={wall} />
-      <Wall from={[plan.minX, plan.minZ]} to={[plan.minX, plan.maxZ]} height={WALL_H} color={wall} />
-      <Wall from={[plan.maxX, plan.minZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
-      {balcony && !props.cutaway ? (
+      <StyledWall from={[plan.minX, plan.minZ]} to={[plan.maxX, plan.minZ]} height={WALL_H} theme={theme} />
+      <StyledWall from={[plan.minX, plan.minZ]} to={[plan.minX, meeting.minZ]} height={WALL_H} theme={theme} />
+      <StyledWall from={[plan.minX, meeting.minZ]} to={[plan.minX, meeting.maxZ]} height={WALL_H} theme={solidTheme} />
+      {meeting.maxZ < plan.maxZ - 0.01 && <StyledWall from={[plan.minX, meeting.maxZ]} to={[plan.minX, plan.maxZ]} height={WALL_H} theme={theme} />}
+      <StyledWall from={[plan.maxX, plan.minZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
+      {!props.cutaway ? (
         <>
-          <Wall from={[plan.minX, plan.maxZ]} to={[balcony.minX, plan.maxZ]} height={sideH} color={wall} />
+          <StyledWall from={[plan.minX, plan.maxZ]} to={[balcony.minX, plan.maxZ]} height={sideH} theme={theme} />
           <Glass from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} />
-          <Wall from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} height={WALL_H - 2.5} color={wall} y={2.5} />
-          <Wall from={[balcony.maxX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
+          <StyledWall from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} height={WALL_H - 2.5} theme={theme} y={2.5} />
+          <StyledWall from={[balcony.maxX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
         </>
       ) : (
-        <Wall from={[plan.minX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
+        <StyledWall from={[plan.minX, plan.maxZ]} to={[plan.maxX, plan.maxZ]} height={sideH} theme={theme} />
       )}
       {/* accent stripe */}
-      <mesh position={[(plan.minX + plan.maxX) / 2, 0.9, plan.minZ + 0.08]}>
+      {!glass && <mesh position={[(plan.minX + plan.maxX) / 2, 0.9, plan.minZ + 0.08]}>
         <boxGeometry args={[plan.maxX - plan.minX, 0.12, 0.02]} />
         <meshStandardMaterial color={theme.accentColor} />
-      </mesh>
-      {windowsBack.map((x) => <Window key={x} x={x} z={plan.minZ + 0.06} rotation={0} />)}
-      {windowsLeft.map((z) => <Window key={z} x={plan.minX + 0.06} z={z} rotation={Math.PI / 2} />)}
+      </mesh>}
+      {windows.back.map((x) => <Window key={x} x={x} z={plan.minZ + 0.06} rotation={0} view={view} />)}
+      {windows.left.map((z) => <Window key={z} x={plan.minX + 0.06} z={z} rotation={Math.PI / 2} view={view} />)}
 
       <Whiteboard position={f.whiteboard} tasks={props.tasks} interact={{ label: 'Task board', action: props.onBoard }} />
       <Elevator position={f.elevator} level={props.level} interact={{ label: 'Elevator — next floor', action: props.onElevator }} />

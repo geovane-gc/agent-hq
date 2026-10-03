@@ -18,6 +18,15 @@ const MIME: Record<string, string> = {
   '.json': 'application/json',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.webm': 'video/webm',
   '.glb': 'model/gltf-binary',
   '.woff2': 'font/woff2',
 };
@@ -37,6 +46,16 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   }
   res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' });
   createReadStream(file).pipe(res);
+}
+
+/**
+ * True when the connection comes from this machine and wasn't relayed by a
+ * proxy or tunnel: the player is sitting at the host, in front of its screen.
+ */
+function fromThisMachine(req: IncomingMessage): boolean {
+  const address = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+  const loopback = address === '::1' || address.startsWith('127.');
+  return loopback && !req.headers['x-forwarded-for'] && !req.headers.forwarded && !req.headers['x-real-ip'];
 }
 
 export function startServer(config: Config, host: OfficeHost, terminal: BossTerminal) {
@@ -70,11 +89,12 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
         else attachLobby(ws);
         return;
       }
-      const actor = orchestrator.authenticate(url.searchParams.get('token') ?? '');
-      if (!actor) {
+      const authenticated = orchestrator.authenticate(url.searchParams.get('token') ?? '');
+      if (!authenticated) {
         ws.close(4001, 'Invalid token');
         return;
       }
+      const actor: Actor = authenticated.kind === 'user' ? { ...authenticated, local: fromThisMachine(req) } : authenticated;
       if (url.searchParams.get('runner') === '1') {
         if (actor.kind !== 'user') return ws.close(4001, 'Invalid token');
         attachRunner(ws, actor);
@@ -192,10 +212,13 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
   }
 
   const isOwner = (a: Actor) => a.kind === 'user' && a.user.role === 'owner';
+  const isPlayer = (a: Actor) => a.kind === 'user';
+  const MEDIA_EVENTS = new Set<ServerEvent['type']>(['voice_state', 'voice_left', 'screen_share', 'screen_share_ended']);
   const onStoreEvent = (event: ServerEvent) => {
     // Meters and mail are private to one player.
     const to = event.type === 'rate_limits' ? event.userId : event.type === 'mail' ? event.mail.toUserId : null;
-    broadcast(event, to ? (a) => a.kind === 'user' && a.user.id === to : undefined);
+    // Voice and screen sharing are between players; agents' connections don't need them.
+    broadcast(event, to ? (a) => a.kind === 'user' && a.user.id === to : MEDIA_EVENTS.has(event.type) ? isPlayer : undefined);
   };
   const onAgentTerminal = (agentId: string, data: string) => {
     const msg = JSON.stringify({ type: 'event', event: { type: 'agent_terminal_output', agentId, data } } satisfies ServerMessage);

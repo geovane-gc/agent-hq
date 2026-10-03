@@ -121,6 +121,8 @@ export async function join(argv: string[]) {
       case 'handoff':
         console.log(`⇄ Handing off "${op.task.title}"`);
         return reply(op.requestKey, () => runner!.handoff(op.project, op.task));
+      // A folder dialog on your screen, for a path on your machine.
+      case 'pick_folder': return reply(op.requestKey, () => runner!.pickFolder(op.defaultPath ?? null));
     }
   };
 

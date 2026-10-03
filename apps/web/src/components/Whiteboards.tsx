@@ -34,7 +34,10 @@ export function spotLabel(world: Snapshot, spot: string | null): string | null {
     const floor = world.floors.find((f) => `floor:${f.id}` === spot);
     return floor ? `Easel on ${floorLabel(floor.level)} · ${floor.name}` : 'Easel on a removed floor';
   }
-  if (spot.startsWith('meeting')) return 'Meeting room wall';
+  if (spot.startsWith('meeting:')) {
+    const floor = world.floors.find((f) => `meeting:${f.id}` === spot);
+    return floor ? `Meeting room wall on ${floorLabel(floor.level)} · ${floor.name}` : 'Meeting room wall on a removed floor';
+  }
   return 'In the office';
 }
 

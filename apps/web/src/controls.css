@@ -1,0 +1,19 @@
+/* Settings → Controls (components/ControlsSettings.tsx). */
+
+.form label.slider-field {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1fr) 46px; align-items: center; gap: 12px;
+  padding: 8px 0; border-top: 1px solid var(--border); font-weight: 400;
+}
+.slider-field span { display: flex; flex-direction: column; min-width: 0; }
+.slider-field small { color: var(--muted); font-size: 12px; }
+.slider-field input[type='range'] { accent-color: var(--accent); border: none; background: none; box-shadow: none; cursor: pointer; }
+.slider-field output { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; }
+.slider-field output.muted { font-weight: 400; }
+
+@media (max-width: 520px) {
+  .form label.slider-field { grid-template-columns: minmax(0, 1fr) 46px; }
+  .slider-field span { grid-column: 1 / -1; }
+}
+
+/* the "Click to walk around" overlay points here */
+.fp-enter small.fp-hint { opacity: 0.6; }

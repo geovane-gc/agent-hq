@@ -5,21 +5,24 @@ import { TakeoverAlerts } from './components/Accounts.tsx';
 import { AgentPanel } from './components/AgentPanel.tsx';
 import { AgentTerminal } from './components/AgentTerminal.tsx';
 import { Board } from './components/Board.tsx';
+import { DecoratePanel } from './components/Decorate.tsx';
 import { Avatars, FloorPicker, MainMenu, Notifications, StatusCard, type MenuItem } from './components/Hud.tsx';
 import { AgentModal, BuildingModal, FloorModal, NewFloorModal, NewProjectModal, NewTaskModal } from './components/forms.tsx';
-import { BossComputer } from './components/Inbox.tsx';
+import { BossComputer, mailUnread, type MailTarget } from './components/MailClient.tsx';
 import { Modal } from './components/Modal.tsx';
 import { SettingsModal } from './components/Settings.tsx';
 import { openFinances } from './components/Finance.tsx';
 import { StartScreen, TycoonLayer, openStartScreen } from './components/StartScreen.tsx';
-import { SummonModal } from './components/SummonModal.tsx';
+import { EmptyBalconyModal, SummonModal } from './components/SummonModal.tsx';
 import { UsageModal } from './components/Usage.tsx';
 import { WhiteboardLayer } from './components/Whiteboards.tsx';
 import { openWhiteboards } from './whiteboards.ts';
+import { ScreenOverlay, VoiceDock } from './components/Voice.tsx';
 import { floorLabel } from './format.ts';
 import { CampusScene } from './office3d/CampusScene.tsx';
 import type { CameraMode } from './office3d/Controls.tsx';
 import { OfficeScene } from './office3d/OfficeScene.tsx';
+import { editor, useEditor } from './office3d/decor/editor.ts';
 
 type Overlay =
   | { kind: 'hire' }
@@ -29,8 +32,10 @@ type Overlay =
   | { kind: 'new-floor'; buildingId: ID }
   | { kind: 'floor' }
   | { kind: 'board' }
-  | { kind: 'computer'; mailId?: ID; tab?: 'inbox' | 'terminal' }
+  /** An office computer's mail (and the boss terminal); `via`: which computer, or the menu. */
+  | { kind: 'computer'; mail?: MailTarget; tab?: 'inbox' | 'terminal'; via?: 'boss' | 'desk' | 'menu' }
   | { kind: 'summon'; agentId: ID }
+  | { kind: 'balcony' }
   | { kind: 'usage' }
   | { kind: 'settings'; tab?: 'general' | 'integrations' | 'team' }
   | null;
@@ -57,8 +62,11 @@ export function App() {
   /** Floor picker (from the status card) and main menu popovers. */
   const [picker, setPicker] = useState(false);
   const [menu, setMenu] = useState(false);
+  /** Decorate mode (owner): build/decorate the current floor. */
+  const decorating = useEditor().open;
 
   useEffect(() => store('hq-view', view), [view]);
+  useEffect(() => { if (editor.get().open) editor.close(); }, [view, floorId]);
   useEffect(() => store('hq-camera', mode), [mode]);
   useEffect(() => { if (floorId) store('hq-floor', floorId); }, [floorId]);
   useEffect(() => {
@@ -76,7 +84,7 @@ export function App() {
       if (e.key === 'Escape' && !document.pointerLockElement && !inTerminal) { setOverlay(null); setMenu(false); setPicker(false); }
       // M opens the menu, unless the player is typing, in a dialog or walking with the mouse captured.
       const busy = !!(e.target as HTMLElement | null)?.closest?.('input, textarea, select, .xterm, [role="dialog"]');
-      if (e.key.toLowerCase() === 'm' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !busy && !document.pointerLockElement && !document.querySelector('.modal-backdrop, .monitor-overlay')) {
+      if (e.key.toLowerCase() === 'm' && !e.repeat && !editor.get().open && !e.ctrlKey && !e.metaKey && !e.altKey && !busy && !document.pointerLockElement && !document.querySelector('.modal-backdrop, .monitor-overlay')) {
         setPicker(false);
         setMenu((open) => !open);
       }
@@ -98,7 +106,7 @@ export function App() {
   const floorAgents = world.agents.filter((a) => a.floorId === floorId);
   /** Repo agents live on the balcony: they don't take desks. */
   const floorStaff = floorAgents.filter((a) => a.kind !== 'repo');
-  const unread = world.mail.filter((m) => !m.read).length;
+  const unread = mailUnread(world);
   const projectIds = projects.map((p) => p.id);
   const openTasks = world.tasks.filter((t) => projectIds.includes(t.projectId) && t.status !== 'done').length;
   const close = () => setOverlay(null);
@@ -141,7 +149,11 @@ export function App() {
     { icon: '🧑‍💻', label: 'Recruit an agent', hint: `${floorStaff.length} of ${floor.desks} desks taken`, onSelect: () => setOverlay({ kind: 'hire' }) },
     ...(owner ? [
       { icon: '📁', label: 'Add a project', hint: projects.length ? projects.map((p) => p.name).join(', ') : 'A GitHub repository for this floor', onSelect: () => setOverlay({ kind: 'project' }) },
-      { icon: '🎨', label: 'Customize floor', hint: 'Desks, floor and wall colors', onSelect: () => setOverlay({ kind: 'floor' }) },
+      {
+        icon: '🛋️', label: 'Decorate', hint: 'Furniture, room style, lighting and desks',
+        onSelect: () => { closeTerminal(); setAgentId(null); setOverlay(null); setMode('iso'); editor.open(); },
+      },
+      { icon: '🎨', label: 'Floor settings', hint: 'Name, number of desks', onSelect: () => setOverlay({ kind: 'floor' }) },
     ] : []),
   ] : view === 'campus' && owner ? [
     { icon: '🏗️', label: 'New building', hint: 'A studio for another kind of work', onSelect: () => setOverlay({ kind: 'building' }) },
@@ -150,8 +162,8 @@ export function App() {
     officeItems,
     [
       {
-        icon: '📧', label: 'Inbox', hint: unread ? `${unread} unread report${unread > 1 ? 's' : ''}` : 'Reports from the balcony crew',
-        badge: unread > 0 && <span className="count-badge">{unread}</span>, onSelect: () => setOverlay({ kind: 'computer' }),
+        icon: '📧', label: 'Mail', hint: unread ? `${unread} unread` : 'Write to teammates · reports from the balcony crew',
+        badge: unread > 0 && <span className="count-badge">{unread}</span>, onSelect: () => setOverlay({ kind: 'computer', via: 'menu' }),
       },
       { icon: '🖍️', label: 'Whiteboards', hint: 'Draw together; boards stay in the office', onSelect: openWhiteboards },
       ...(world.economy ? [{ icon: '💼', label: 'Finances', hint: 'Cash, profit and the ledger', onSelect: openFinances }] : []),
@@ -184,13 +196,16 @@ export function App() {
           onElevator={nextFloor}
           onTerminal={() => setOverlay({ kind: 'computer' })}
           onSummon={(agentId) => setOverlay({ kind: 'summon', agentId })}
+          onEmptyBalcony={() => setOverlay({ kind: 'balcony' })}
+          decorating={decorating}
         />
       ) : (
         <div className="splash"><p className="muted">No floors yet.</p></div>
       )}
 
       {/* ---------------- HUD */}
-      {!focusAgentId && (
+      {decorating && view === 'office' && floor && <DecoratePanel world={world} floor={floor} />}
+      {!focusAgentId && !decorating && (
         <StatusCard
           world={world}
           floor={view === 'office' ? floor : undefined}
@@ -215,14 +230,14 @@ export function App() {
         </>
       )}
 
-      <div className="hud-corner">
+      <div className="hud-corner" style={decorating ? { display: 'none' } : undefined}>
         <div className="seg icons" role="group" aria-label="View">
           <button className={view === 'campus' ? 'active' : ''} aria-pressed={view === 'campus'} onClick={() => { closeTerminal(); setView('campus'); }} title="Campus: every building">🏙️</button>
           <button className={view === 'office' && mode === 'iso' ? 'active' : ''} aria-pressed={view === 'office' && mode === 'iso'} onClick={() => { closeTerminal(); setView('office'); setMode('iso'); }} title="Office overview: drag to rotate, wheel to zoom">🗺️</button>
           <button className={view === 'office' && mode === 'first' ? 'active' : ''} aria-pressed={view === 'office' && mode === 'first'} onClick={() => { closeTerminal(); setView('office'); setMode('first'); }} title="Walk around in first person (WASD)">🚶</button>
         </div>
         <button className={`menu-btn ${menu ? 'open' : ''}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => { setPicker(false); setMenu(!menu); }} title="Menu (M)">
-          <span aria-hidden>☰</span> Menu
+          <span aria-hidden>☰</span> Menu{unread > 0 && <span className="count-badge" title={`${unread} unread mail`}>{unread}</span>}
         </button>
       </div>
       {menu && (
@@ -236,9 +251,12 @@ export function App() {
         world={world}
         onOpenAgent={openAgent}
         onBoard={() => { setView('office'); setOverlay({ kind: 'board' }); }}
-        onInbox={(mailId) => setOverlay({ kind: 'computer', mailId })}
+        onInbox={(mailId) => setOverlay({ kind: 'computer', mail: { reportId: mailId }, via: 'menu' })}
+        onMail={(threadId) => setOverlay({ kind: 'computer', mail: { threadId }, via: 'menu' })}
       />
       <TakeoverAlerts world={world} onOpen={openAgent} />
+      <VoiceDock world={world} floor={view === 'office' ? floor : undefined} compact={!!focusAgentId || decorating} />
+      <ScreenOverlay world={world} />
 
       {terminalAgentId && view === 'office' && (
         <AgentTerminal
@@ -249,6 +267,7 @@ export function App() {
           onNewTask={() => newTask(false, terminalAgentId)}
           onDetails={() => { const id = terminalAgentId; closeTerminal(); setAgentId(id); }}
           onChatOnly={() => { const id = terminalAgentId; closeTerminal(); setAgentId(id); }}
+          onMail={() => setOverlay({ kind: 'computer', via: 'desk' })}
         />
       )}
 
@@ -279,8 +298,11 @@ export function App() {
       {overlay?.kind === 'building' && <BuildingModal building={world.buildings.find((b) => b.id === overlay.id)} onClose={close} />}
       {overlay?.kind === 'new-floor' && <NewFloorModal buildingId={overlay.buildingId} onClose={close} />}
       {overlay?.kind === 'floor' && floor && <FloorModal floor={floor} world={world} onClose={close} />}
-      {overlay?.kind === 'computer' && <BossComputer world={world} initialMailId={overlay.mailId} initialTab={overlay.tab} onClose={close} onOpenAgent={openAgent} />}
+      {overlay?.kind === 'computer' && <BossComputer world={world} initial={overlay.mail} initialTab={overlay.tab} via={overlay.via} onClose={close} onOpenAgent={(id) => { closeTerminal(); openAgent(id); }} />}
       {overlay?.kind === 'summon' && <SummonModal world={world} agentId={overlay.agentId} onClose={close} onOpenAgent={openAgent} />}
+      {overlay?.kind === 'balcony' && floor && (
+        <EmptyBalconyModal world={world} floorId={floor.id} onClose={close} onAddProject={owner ? () => setOverlay({ kind: 'project' }) : null} />
+      )}
       {overlay?.kind === 'usage' && <UsageModal onClose={close} />}
       {overlay?.kind === 'settings' && <SettingsModal world={world} initial={overlay.tab} onClose={close} />}
       <TycoonLayer world={world} />

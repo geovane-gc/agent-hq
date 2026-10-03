@@ -2,7 +2,7 @@
 // agents, git and node:sqlite behave exactly as on the command line) and shows
 // the office in a window. In development, scripts/dev.mjs runs the server and
 // passes its URL in AGENT_HQ_URL instead.
-const { app, BrowserWindow, shell, dialog } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron');
 const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -10,6 +10,8 @@ const fs = require('node:fs');
 const root = path.resolve(__dirname, '../..');
 const port = process.env.AGENT_HQ_PORT || '4317';
 let server = null;
+/** The office page's origin: only it may open dialogs through the preload. */
+let officeOrigin = null;
 
 function startServer() {
   return new Promise((resolve, reject) => {
@@ -62,15 +64,88 @@ async function createWindow() {
     backgroundColor: '#14171c',
     autoHideMenuBar: true,
     show: false,
-    webPreferences: { contextIsolation: true, sandbox: true },
+    webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs') },
   });
+  setupMedia(win, url);
   win.once('ready-to-show', () => win.show());
   // Links to the outside world open in the system browser.
   win.webContents.setWindowOpenHandler(({ url: target }) => {
     shell.openExternal(target);
     return { action: 'deny' };
   });
+  officeOrigin = new URL(url).origin;
   win.loadURL(url);
+}
+
+/** The system folder chooser, for the page's "Browse…" buttons (see preload.cjs). */
+async function pickFolder(event, defaultPath) {
+  if (!officeOrigin || !event.senderFrame || new URL(event.senderFrame.url).origin !== officeOrigin) return null;
+  const options = { title: 'Choose a folder', properties: ['openDirectory', 'createDirectory'] };
+  if (typeof defaultPath === 'string' && defaultPath.trim()) {
+    const wanted = path.resolve(defaultPath.trim().replace(/^~(?=$|[\\/])/, app.getPath('home')));
+    if (fs.existsSync(wanted)) options.defaultPath = wanted;
+  }
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await (win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options));
+  return result.canceled ? null : result.filePaths[0] ?? null;
+}
+
+// ---- Voice chat and meeting-room screen sharing.
+// The office may use the microphone (never the camera) and capture a screen
+// or window, and only the office itself: other origins are refused. Screen
+// capture shows the system picker where there is one (macOS 15+), otherwise a
+// small menu of screens and windows with thumbnails.
+function setupMedia(win, officeUrl) {
+  const { desktopCapturer, Menu, session, systemPreferences } = require('electron');
+  const origin = new URL(officeUrl).origin;
+  const fromOffice = (url) => { try { return new URL(url).origin === origin; } catch { return false; } };
+  const ses = session.defaultSession;
+
+  ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
+    if (permission === 'media' || permission === 'speaker-selection') return fromOffice(requestingOrigin);
+    return true; // everything else as Electron's default
+  });
+  ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    if (permission === 'speaker-selection') return callback(fromOffice(details.requestingUrl));
+    if (permission !== 'media') return callback(true); // Electron's default
+    const types = details.mediaTypes ?? [];
+    if (!fromOffice(details.requestingUrl) || types.length === 0 || types.some((t) => t !== 'audio')) return callback(false);
+    if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('microphone') !== 'granted') {
+      systemPreferences.askForMediaAccess('microphone').then(callback, () => callback(false));
+      return;
+    }
+    callback(true);
+  });
+
+  ses.setDisplayMediaRequestHandler((request, callback) => {
+    if (!fromOffice(request.securityOrigin || request.frame?.url || '')) return callback({});
+    desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 160, height: 90 } }).then((sources) => {
+      if (sources.length === 0) return callback({});
+      let answered = false;
+      const answer = (source) => {
+        if (answered) return;
+        answered = true;
+        callback(source ? { video: source } : {});
+      };
+      const item = (source) => ({
+        label: source.name.length > 60 ? `${source.name.slice(0, 59)}…` : source.name,
+        icon: source.thumbnail.isEmpty() ? undefined : source.thumbnail.resize({ height: 36 }),
+        click: () => answer(source),
+      });
+      const screens = sources.filter((s) => s.id.startsWith('screen:'));
+      const windows = sources.filter((s) => !s.id.startsWith('screen:') && s.name);
+      const menu = Menu.buildFromTemplate([
+        { label: 'Share your screen in the meeting room', enabled: false },
+        { type: 'separator' },
+        ...screens.map(item),
+        ...(windows.length ? [{ type: 'separator' }, ...windows.slice(0, 20).map(item)] : []),
+        { type: 'separator' },
+        { label: 'Cancel', click: () => answer(null) },
+      ]);
+      // Closing the menu without a choice cancels. The close callback can fire just before the click, hence the delay.
+      menu.popup({ window: win, callback: () => setTimeout(() => answer(null), 100) });
+    }, () => callback({}));
+  }, { useSystemPicker: true });
 }
 
 // One office per machine: focus the existing window instead of opening a second one.
@@ -81,7 +156,10 @@ if (!app.requestSingleInstanceLock()) {
     const [win] = BrowserWindow.getAllWindows();
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    ipcMain.handle('agent-hq:pick-folder', pickFolder);
+    createWindow();
+  });
 }
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', stopServer);

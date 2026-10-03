@@ -3,8 +3,9 @@ import { Canvas, type ThreeEvent } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { HtmlLayer, Label } from './Label.tsx';
 import { Model } from './models.tsx';
-import * as THREE from 'three';
+import { RooftopSign, useFacadeMaterial } from './decor/Exterior.tsx';
 import type { Building, Floor, ID, Snapshot } from '@agent-hq/protocol';
+import { BUILDING_ICONS } from '@agent-hq/protocol/catalog';
 
 // Outside view: one tower per building, one storey per floor. Lit windows
 // show how many agents on that floor are working; a waving hand means someone
@@ -12,14 +13,13 @@ import type { Building, Floor, ID, Snapshot } from '@agent-hq/protocol';
 
 const STOREY = 1.1;
 const SPACING = 7;
-const ICON = { web: '🌐', desktop: '🖥️', game: '🎮', custom: '🏢' } as const;
+const ICON = BUILDING_ICONS;
 
 function Storey(props: { building: Building; floor: Floor; world: Snapshot; index: number; onEnter: () => void; hovered: boolean; onHover: (h: boolean) => void }) {
   const agents = props.world.agents.filter((a) => a.floorId === props.floor.id);
   const working = agents.filter((a) => a.status === 'working' || a.status === 'awaiting_approval').length;
   const waiting = agents.some((a) => a.status === 'awaiting_approval');
-  const base = new THREE.Color(props.building.color);
-  const wall = props.hovered ? base.clone().offsetHSL(0, 0, 0.12) : base;
+  const facade = useFacadeMaterial(props.building, props.hovered, 4, STOREY);
   const windows = 6;
   return (
     <group
@@ -28,9 +28,8 @@ function Storey(props: { building: Building; floor: Floor; world: Snapshot; inde
       onPointerOver={(e) => { e.stopPropagation(); props.onHover(true); document.body.style.cursor = 'pointer'; }}
       onPointerOut={() => { props.onHover(false); document.body.style.cursor = ''; }}
     >
-      <mesh castShadow receiveShadow>
+      <mesh castShadow receiveShadow material={facade}>
         <boxGeometry args={[4, STOREY - 0.06, 4]} />
-        <meshStandardMaterial color={wall} roughness={0.7} />
       </mesh>
       {[0, Math.PI / 2, Math.PI, -Math.PI / 2].map((rot) => (
         <group key={rot} rotation={[0, rot, 0]}>
@@ -57,6 +56,8 @@ function Storey(props: { building: Building; floor: Floor; world: Snapshot; inde
 }
 
 function Tower(props: { building: Building; world: Snapshot; position: [number, number, number]; onEnter: (floorId: ID) => void }) {
+  // The rooftop sign shows the company (office) name unless the building has its own.
+  const sign = props.building.sign || props.world.office?.name || props.building.name;
   const floors = props.world.floors.filter((f) => f.buildingId === props.building.id).sort((a, b) => a.level - b.level);
   const [hover, setHover] = useState<ID | null>(null);
   const height = floors.length * STOREY;
@@ -83,6 +84,7 @@ function Tower(props: { building: Building; world: Snapshot; position: [number, 
         <boxGeometry args={[4.2, 0.2, 4.2]} />
         <meshStandardMaterial color="#4a4f5a" />
       </mesh>
+      <RooftopSign text={sign} color={props.building.color} y={height + 0.2} />
     </group>
   );
 }
@@ -125,7 +127,7 @@ export function CampusScene(props: { world: Snapshot; onEnterFloor: (id: ID) => 
         {buildings.map((b, i) => {
           const storeys = props.world.floors.filter((f) => f.buildingId === b.id).length;
           return (
-            <Label key={`sign-${b.id}`} position={[positions[i][0], storeys * STOREY + 1, positions[i][2]]} center distanceFactor={16} zIndexRange={[20, 0]}>
+            <Label key={`sign-${b.id}`} position={[positions[i][0], storeys * STOREY + 1.9, positions[i][2]]} center distanceFactor={16} zIndexRange={[20, 0]}>
               <div className="tag building-sign" style={{ borderColor: b.color }}>
                 {ICON[b.kind]} <strong>{b.name}</strong>
               </div>

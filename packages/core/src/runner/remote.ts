@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { HostToRunner, ID, Project, RunnerMessage, RunnerOp, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
 import type { AccountRemoval, AccountStatus } from '../accounts.ts';
+import { PICK_FOLDER_TIMEOUT_MS } from '../folder-picker.ts';
 import type { HandoffResult } from '../git.ts';
 import type { RepoAgentDef } from '../repo-agents.ts';
 import type { Runner, RunnerSession } from './runner.ts';
@@ -101,6 +102,12 @@ export class RemoteRunner implements Runner {
 
   handoff(project: Project, task: Task): Promise<HandoffResult> {
     return this.request((requestKey) => ({ op: 'handoff', requestKey, project, task }), 120000);
+  }
+
+  /** The dialog opens on the teammate's screen; it may stay open a while. */
+  pickFolder(defaultPath: string | null): Promise<string | null> {
+    return this.request<string | null>((requestKey) => ({ op: 'pick_folder', requestKey, defaultPath }), PICK_FOLDER_TIMEOUT_MS + 30000)
+      .then((p) => (typeof p === 'string' && p ? p : null));
   }
 
   /** Called for every runner_reply received from the teammate's machine. */
