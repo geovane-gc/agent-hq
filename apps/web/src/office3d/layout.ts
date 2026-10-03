@@ -167,6 +167,73 @@ export function balconyLayout(plan: FloorPlan, crew: number): Balcony {
   return { minX, maxX, minZ: plan.maxZ, maxZ: smokeZ + 0.65, desks, spots };
 }
 
+/** Something mounted on a wall: center, rotation around Y (facing direction) and size. */
+export interface WallMount {
+  position: Vec3;
+  rotation: number;
+  width: number;
+  height: number;
+}
+
+export interface MeetingRoom extends Rect {
+  center: Vec3;
+  /** Gap in the partition (at x = maxX) players walk through. */
+  door: { minZ: number; maxZ: number };
+  table: Rect;
+  seats: Array<{ position: Vec3; rotation: number }>;
+  /** The big screen on the outer wall, facing into the room (+X). Shows the shared screen. */
+  screen: WallMount;
+  /**
+   * A free stretch of the partition, facing the screen (-X), kept clear for a
+   * collaborative whiteboard. Nothing is built there yet.
+   */
+  whiteboardAnchor: WallMount;
+  /** The room is shallower than the floor, so it has its own front partition at maxZ. */
+  frontWall: boolean;
+}
+
+const MEETING_MAX_DEPTH = 7;
+const MEETING_DOOR = 1.3;
+
+/**
+ * The meeting room: the strip under the boss room, against the left wall.
+ * Its back is the boss room's glass, its right side a partition with a door
+ * next to the spawn point. A long table runs from the wall screen (left wall)
+ * to the whiteboard spot on the partition.
+ */
+export function meetingRoom(plan: FloorPlan): MeetingRoom {
+  const b = plan.boss;
+  const minX = plan.minX;
+  const maxX = b.maxX;
+  const minZ = b.maxZ;
+  const maxZ = Math.min(plan.maxZ, minZ + MEETING_MAX_DEPTH);
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+  const door = { minZ: minZ + 0.25, maxZ: minZ + 0.25 + MEETING_DOOR };
+  const tableLength = Math.min(3.2, maxX - minX - 2.6);
+  const seats: MeetingRoom['seats'] = [];
+  for (const dx of [-1, 0, 1]) {
+    seats.push({ position: [cx + dx * 1.0, 0, cz - 1.0], rotation: Math.PI });
+    seats.push({ position: [cx + dx * 1.0, 0, cz + 1.0], rotation: 0 });
+  }
+  const boardWidth = Math.max(1.2, Math.min(2.4, maxZ - door.maxZ - 0.6));
+  return {
+    minX, maxX, minZ, maxZ,
+    center: [cx, 0, cz],
+    door,
+    table: box(cx, cz, tableLength / 2, 0.6),
+    seats,
+    screen: { position: [minX + 0.1, 1.55, cz], rotation: Math.PI / 2, width: 2.8, height: 1.575 },
+    whiteboardAnchor: { position: [maxX - 0.1, 1.5, (door.maxZ + maxZ) / 2], rotation: -Math.PI / 2, width: boardWidth, height: 1.2 },
+    frontWall: maxZ < plan.maxZ - 0.01,
+  };
+}
+
+/** Is a floor position inside the meeting room (walls excluded)? */
+export function inMeetingRoom(room: Rect, position: Vec3): boolean {
+  return position[0] > room.minX + 0.1 && position[0] < room.maxX - 0.1 && position[2] > room.minZ + 0.1 && position[2] < room.maxZ - 0.1;
+}
+
 const box = (cx: number, cz: number, hx: number, hz: number): Rect => ({ minX: cx - hx, maxX: cx + hx, minZ: cz - hz, maxZ: cz + hz });
 
 /** Solid furniture and partitions the first-person player can't walk through. */
@@ -196,5 +263,12 @@ export function colliders(plan: FloorPlan, theme: FloorTheme): Rect[] {
     out.push(box(lx, lz - 0.95, 1.05, 0.45), box(lx, lz + 0.25, 0.5, 0.5), box(lx + 2.2, lz - 1.0, 0.5, 0.35), box(lx - 1.45, lz - 1.1, 0.22, 0.22));
   }
   if (theme.plants) for (const p of f.plants) out.push(box(p.position[0], p.position[2], 0.3 * p.scale, 0.3 * p.scale));
+  // meeting room: partition with a door, front partition, table and chairs
+  const m = meetingRoom(plan);
+  out.push({ minX: m.maxX - 0.08, maxX: m.maxX + 0.08, minZ: m.minZ, maxZ: m.door.minZ });
+  out.push({ minX: m.maxX - 0.08, maxX: m.maxX + 0.08, minZ: m.door.maxZ, maxZ: m.maxZ });
+  if (m.frontWall) out.push({ minX: m.minX, maxX: m.maxX + 0.08, minZ: m.maxZ - 0.08, maxZ: m.maxZ + 0.08 });
+  out.push(m.table);
+  for (const s of m.seats) out.push(box(s.position[0], s.position[2], 0.24, 0.24));
   return out;
 }

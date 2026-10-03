@@ -76,7 +76,63 @@ function General({ world }: { world: Snapshot }) {
           </label>
         </section>
       )}
+      {owner && <VoiceServers world={world} />}
     </div>
+  );
+}
+
+/** Owner: proximity radius and the STUN/TURN servers players' browsers use to reach each other. */
+function VoiceServers({ world }: { world: Snapshot }) {
+  const v = world.settings.voice;
+  const [stun, setStun] = useState(v.stunUrls.join('\n'));
+  const [turnUrl, setTurnUrl] = useState(v.turnUrl ?? '');
+  const [turnUsername, setTurnUsername] = useState(v.turnUsername ?? '');
+  const [turnCredential, setTurnCredential] = useState('');
+  const [radius, setRadius] = useState(String(v.proximityRadius));
+  const [saved, setSaved] = useState(false);
+  const save = () => {
+    setSaved(false);
+    run('set_voice_settings', {
+      stunUrls: stun.split(/[\s,]+/).filter(Boolean),
+      turnUrl: turnUrl.trim() || null,
+      turnUsername: turnUsername.trim() || null,
+      // Empty keeps the stored credential; clearing the TURN URL clears it too.
+      ...(turnCredential ? { turnCredential } : !turnUrl.trim() ? { turnCredential: null } : {}),
+      proximityRadius: Number(radius),
+    }).then(() => { setTurnCredential(''); setSaved(true); }).catch(() => {});
+  };
+  return (
+    <section className="card-section span2">
+      <h3>Voice &amp; screen sharing</h3>
+      <p className="hint">
+        Players talk and share screens peer to peer (WebRTC, every player connected to every other: comfortable up to
+        about 8 people). STUN lets browsers find each other; players behind strict NATs or corporate firewalls also need a
+        TURN relay. The TURN credential is kept on this machine and only handed to players when they join voice.
+      </p>
+      <label className="inline-field">
+        <span><strong>Proximity radius</strong><small>Beyond this distance (meters) you can't hear someone nearby.</small></span>
+        <input type="number" min={2} max={50} step={0.5} value={radius} onChange={(e) => setRadius(e.target.value)} />
+      </label>
+      <label>STUN servers <small className="muted">(one per line)</small>
+        <textarea rows={2} className="code" value={stun} onChange={(e) => setStun(e.target.value)} placeholder="stun:stun.l.google.com:19302" spellCheck={false} />
+      </label>
+      <div className="grid2">
+        <label>TURN server
+          <input value={turnUrl} onChange={(e) => setTurnUrl(e.target.value)} placeholder="turn:turn.example.com:3478" spellCheck={false} />
+        </label>
+        <label>TURN username
+          <input value={turnUsername} onChange={(e) => setTurnUsername(e.target.value)} autoComplete="off" />
+        </label>
+      </div>
+      <label>TURN credential
+        <input type="password" value={turnCredential} onChange={(e) => setTurnCredential(e.target.value)} autoComplete="new-password"
+          placeholder={v.turnCredentialSet ? '•••••• stored (leave empty to keep)' : 'Not set'} />
+      </label>
+      <div className="row">
+        <button type="button" onClick={save}>Save voice settings</button>
+        {saved && <span className="hint">Saved. It applies to new voice connections.</span>}
+      </div>
+    </section>
   );
 }
 

@@ -64,6 +64,7 @@ async function createWindow() {
     show: false,
     webPreferences: { contextIsolation: true, sandbox: true },
   });
+  setupMedia(win, url);
   win.once('ready-to-show', () => win.show());
   // Links to the outside world open in the system browser.
   win.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -71,6 +72,64 @@ async function createWindow() {
     return { action: 'deny' };
   });
   win.loadURL(url);
+}
+
+// ---- Voice chat and meeting-room screen sharing.
+// The office may use the microphone (never the camera) and capture a screen
+// or window, and only the office itself: other origins are refused. Screen
+// capture shows the system picker where there is one (macOS 15+), otherwise a
+// small menu of screens and windows with thumbnails.
+function setupMedia(win, officeUrl) {
+  const { desktopCapturer, Menu, session, systemPreferences } = require('electron');
+  const origin = new URL(officeUrl).origin;
+  const fromOffice = (url) => { try { return new URL(url).origin === origin; } catch { return false; } };
+  const ses = session.defaultSession;
+
+  ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
+    if (permission === 'media' || permission === 'speaker-selection') return fromOffice(requestingOrigin);
+    return true; // everything else as Electron's default
+  });
+  ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    if (permission === 'speaker-selection') return callback(fromOffice(details.requestingUrl));
+    if (permission !== 'media') return callback(true); // Electron's default
+    const types = details.mediaTypes ?? [];
+    if (!fromOffice(details.requestingUrl) || types.length === 0 || types.some((t) => t !== 'audio')) return callback(false);
+    if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('microphone') !== 'granted') {
+      systemPreferences.askForMediaAccess('microphone').then(callback, () => callback(false));
+      return;
+    }
+    callback(true);
+  });
+
+  ses.setDisplayMediaRequestHandler((request, callback) => {
+    if (!fromOffice(request.securityOrigin || request.frame?.url || '')) return callback({});
+    desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 160, height: 90 } }).then((sources) => {
+      if (sources.length === 0) return callback({});
+      let answered = false;
+      const answer = (source) => {
+        if (answered) return;
+        answered = true;
+        callback(source ? { video: source } : {});
+      };
+      const item = (source) => ({
+        label: source.name.length > 60 ? `${source.name.slice(0, 59)}…` : source.name,
+        icon: source.thumbnail.isEmpty() ? undefined : source.thumbnail.resize({ height: 36 }),
+        click: () => answer(source),
+      });
+      const screens = sources.filter((s) => s.id.startsWith('screen:'));
+      const windows = sources.filter((s) => !s.id.startsWith('screen:') && s.name);
+      const menu = Menu.buildFromTemplate([
+        { label: 'Share your screen in the meeting room', enabled: false },
+        { type: 'separator' },
+        ...screens.map(item),
+        ...(windows.length ? [{ type: 'separator' }, ...windows.slice(0, 20).map(item)] : []),
+        { type: 'separator' },
+        { label: 'Cancel', click: () => answer(null) },
+      ]);
+      // Closing the menu without a choice cancels. The close callback can fire just before the click, hence the delay.
+      menu.popup({ window: win, callback: () => setTimeout(() => answer(null), 100) });
+    }, () => callback({}));
+  }, { useSystemPicker: true });
 }
 
 // One office per machine: focus the existing window instead of opening a second one.

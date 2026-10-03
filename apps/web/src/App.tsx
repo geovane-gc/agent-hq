@@ -14,6 +14,7 @@ import { openFinances } from './components/Finance.tsx';
 import { StartScreen, TycoonLayer, openStartScreen } from './components/StartScreen.tsx';
 import { SummonModal } from './components/SummonModal.tsx';
 import { UsageModal } from './components/Usage.tsx';
+import { ScreenOverlay, VoiceDock } from './components/Voice.tsx';
 import { floorLabel } from './format.ts';
 import { CampusScene } from './office3d/CampusScene.tsx';
 import type { CameraMode } from './office3d/Controls.tsx';
@@ -236,6 +237,8 @@ export function App() {
         onInbox={(mailId) => setOverlay({ kind: 'computer', mailId })}
       />
       <TakeoverAlerts world={world} onOpen={openAgent} />
+      <VoiceDock world={world} floor={view === 'office' ? floor : undefined} compact={!!focusAgentId} />
+      <ScreenOverlay world={world} />
 
       {terminalAgentId && view === 'office' && (
         <AgentTerminal
