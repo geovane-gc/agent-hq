@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Presence, User } from '@agent-hq/protocol';
+import { useClient } from '../api.ts';
+import { useVoice } from '../voice/engine.ts';
 import type { CameraMode } from './Controls.tsx';
 import { Label } from './Label.tsx';
 import type { Fixtures, Vec3 } from './layout.ts';
@@ -32,10 +34,16 @@ function Walker({ user, position, rotation }: { user: User; position: Vec3; rota
 }
 
 function NameTag({ user, height }: { user: User; height: number }) {
+  // Voice: a ring while they talk, a mic while their mic is live.
+  const voice = useVoice();
+  const { world } = useClient();
+  const speaking = !!voice.speaking[user.id];
+  const live = !!world?.voice.some((v) => v.userId === user.id && v.mic);
   return (
     <Label position={[0, height, 0]} center distanceFactor={14} zIndexRange={[20, 0]}>
-      <span className="tag player" style={{ borderColor: user.color }} title={user.role === 'owner' ? 'Boss' : 'Manager'}>
-        <span className="dot" style={{ background: user.color }} /> {user.name}{user.role === 'owner' ? ' 👑' : ''}
+      <span className={`tag player ${speaking ? 'speaking' : ''}`} style={{ borderColor: user.color }} title={user.role === 'owner' ? 'Boss' : 'Manager'}>
+        {speaking ? <span className="speaking-icon" aria-label="talking">🔊</span> : <span className="dot" style={{ background: user.color }} />} {user.name}{user.role === 'owner' ? ' 👑' : ''}
+        {live && !speaking && <span className="mic-dot" title="Mic on" aria-label="mic on" />}
       </span>
     </Label>
   );

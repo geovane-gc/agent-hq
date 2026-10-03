@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { Agent, AgentStatus, Building, Floor, ID, LedgerEntry, Snapshot, TaskStatus } from '@agent-hq/protocol';
+import { BUILDING_ICONS } from '@agent-hq/protocol/catalog';
 import { STATUS_LABEL } from '../agentUtil.ts';
 import { floorLabel, humanize, initials, toolLabel, usd } from '../format.ts';
+import { NOTICE_EVENT, type HudNotice } from '../notify.ts';
 import { CashBadge, openFinances } from './Finance.tsx';
+import { onPlayerMail } from './MailClient.tsx';
+import { UserPortrait } from './Portrait.tsx';
 import { RateMeters } from './Usage.tsx';
 
 // The heads-up display: one status card, one menu, notification cards.
 // Everything else stays hidden until the player asks for it.
 
-export const BUILDING_ICON = { web: '🌐', desktop: '🖥️', game: '🎮', custom: '🏢' } as const;
+export const BUILDING_ICON = BUILDING_ICONS;
 
 /** Statuses in the order the HUD lists them: what needs you first. */
 const STATUS_ORDER: AgentStatus[] = ['awaiting_approval', 'error', 'working', 'idle', 'offline'];
@@ -202,6 +206,8 @@ interface Note {
   id: string;
   tone: 'waiting' | 'success' | 'error';
   icon: string;
+  /** Shown instead of the icon, e.g. who sent you mail. */
+  portrait?: ReactNode;
   title: string;
   text?: string;
   action?: { label: string; run: () => void };
@@ -210,7 +216,9 @@ interface Note {
 function NoteCard({ note, onDismiss }: { note: Note; onDismiss: () => void }) {
   return (
     <div className={`note tone-${note.tone}`} role={note.tone === 'error' ? 'alert' : 'status'}>
-      <span className={`note-icon ${note.tone === 'waiting' ? 'bounce' : ''}`} aria-hidden>{note.icon}</span>
+      {note.portrait
+        ? <span className="note-icon note-portrait" aria-hidden>{note.portrait}</span>
+        : <span className={`note-icon ${note.tone === 'waiting' ? 'bounce' : ''}`} aria-hidden>{note.icon}</span>}
       <div className="note-body">
         <strong>{note.title}</strong>
         {note.text && <span title={note.text}>{note.text}</span>}
@@ -225,7 +233,14 @@ function NoteCard({ note, onDismiss }: { note: Note; onDismiss: () => void }) {
  * Approval requests (while they last), finished or failed tasks and errors,
  * stacked as small cards in the bottom-left corner.
  */
-export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) => void; onBoard: () => void; onInbox: (mailId: ID) => void }) {
+export function Notifications(props: {
+  world: Snapshot;
+  onOpenAgent: (id: ID) => void;
+  onBoard: () => void;
+  onInbox: (mailId: ID) => void;
+  /** Opens a players' conversation in the mail client. */
+  onMail: (threadId: ID) => void;
+}) {
   const { world } = props;
   const [events, setEvents] = useState<Note[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -239,9 +254,14 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
 
   useEffect(() => {
     const on = (e: Event) => push({ id: `err-${Date.now()}-${Math.random()}`, tone: 'error', icon: '⚠️', title: 'That didn’t work', text: String((e as CustomEvent).detail) }, 8000);
-    const notice = (e: Event) => push({ id: `notice-${Date.now()}-${Math.random()}`, tone: 'success', icon: '⇄', title: 'Takeover', text: String((e as CustomEvent).detail) }, 10000);
+    // Notices raised with notify() (notify.ts) carry their own title and icon.
+    const notice = (e: Event) => {
+      const n = (e as CustomEvent<HudNotice | string>).detail;
+      const { ttl = 10000, ...note } = typeof n === 'string' ? { title: 'Notice', text: n } : n;
+      push({ tone: 'success', icon: 'ℹ️', ...note, id: note.id ?? `notice-${Date.now()}-${Math.random()}` }, ttl);
+    };
     window.addEventListener('hq-error', on);
-    window.addEventListener('hq-notice', notice);
+    window.addEventListener(NOTICE_EVENT, notice);
     // Tycoon: revenue for merged work (see Finance.tsx).
     const onLedger = (e: Event) => {
       const entry = (e as CustomEvent<LedgerEntry>).detail;
@@ -251,7 +271,7 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
     window.addEventListener('hq-ledger', onLedger);
     return () => {
       window.removeEventListener('hq-error', on);
-      window.removeEventListener('hq-notice', notice);
+      window.removeEventListener(NOTICE_EVENT, notice);
       window.removeEventListener('hq-ledger', onLedger);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,6 +308,27 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [world.mail]);
+
+  // "You've got mail" from a teammate: their portrait, the subject, and Open.
+  const latest = useRef(world);
+  latest.current = world;
+  useEffect(() => onPlayerMail((e) => {
+    const w = latest.current;
+    // Everything read (here or in another tab): those cards have served their purpose.
+    if (e.type === 'player_mail_changed' && e.unread === 0) setEvents((list) => list.filter((n) => !n.id.startsWith('pmail-')));
+    if (e.type !== 'player_mail' || !e.mail.received || e.mail.fromUserId === w.you.id) return;
+    const from = w.users.find((u) => u.id === e.mail.fromUserId);
+    const id = `pmail-${e.mail.id}`;
+    const open = () => {
+      setEvents((list) => list.filter((n) => n.id !== id));
+      props.onMail(e.mail.threadId);
+    };
+    push({
+      id, tone: 'success', icon: '📧', portrait: <UserPortrait user={from} size={30} />,
+      title: `${from?.name ?? 'A teammate'} sent you mail`, text: e.mail.subject, action: { label: 'Open', run: open },
+    }, 15000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
 
   const approvals: Note[] = world.agents
     .filter((a) => a.status === 'awaiting_approval' && a.ownerId === world.you.id)

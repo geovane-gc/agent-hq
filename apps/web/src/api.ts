@@ -10,6 +10,7 @@ import type {
   TakeoverRequest,
   TranscriptEntry,
 } from '@agent-hq/protocol';
+import { notify } from './notify.ts';
 
 export type ConnectionState = 'connecting' | 'open' | 'closed' | 'unauthorized';
 
@@ -70,6 +71,16 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'presence_left': return { ...world, presence: world.presence.filter((p) => p.userId !== e.userId) };
     case 'mail': return { ...world, mail: upsert(world.mail, e.mail).sort((a, b) => b.createdAt - a.createdAt) };
     case 'ledger': return { ...world, economy: e.economy };
+    case 'player_mail': case 'player_mail_changed': return { ...world, playerMail: { unread: e.unread } };
+    case 'voice_state': return { ...world, voice: [...world.voice.filter((v) => v.userId !== e.voice.userId), e.voice] };
+    case 'voice_left': return { ...world, voice: world.voice.filter((v) => v.userId !== e.userId) };
+    case 'screen_share': return { ...world, screenShares: [...world.screenShares.filter((s) => s.floorId !== e.share.floorId), e.share] };
+    case 'screen_share_ended': return { ...world, screenShares: world.screenShares.filter((s) => !(s.floorId === e.floorId && s.userId === e.userId)) };
+    // office customization (decorate mode)
+    case 'decor': return { ...world, decor: upsert(world.decor, e.item) };
+    case 'decor_removed': return { ...world, decor: without(world.decor, e.id) };
+    case 'desk_setup': return { ...world, desks: [...world.desks.filter((d) => d.agentId !== e.setup.agentId), e.setup] };
+    case 'desk_setup_removed': return { ...world, desks: world.desks.filter((d) => d.agentId !== e.agentId) };
     default: return world;
   }
 }
@@ -96,6 +107,9 @@ class Client {
    * (whiteboards.ts) so cursors and strokes don't re-render the whole app.
    */
   readonly whiteboards = new EventTarget();
+
+  /** WebRTC signaling addressed to this player (voice/engine.ts picks its tab's). */
+  readonly rtc = new EventTarget();
 
   constructor() {
     this.connect();
@@ -149,6 +163,8 @@ class Client {
       const e = msg.event;
       // Tycoon: lets the finance UI celebrate revenue (see components/Finance.tsx).
       if (e.type === 'ledger') window.dispatchEvent(new CustomEvent('hq-ledger', { detail: e.entry }));
+      // Player mail: the mail client refreshes, notifications announce new messages (see MailClient.tsx).
+      if (e.type === 'player_mail' || e.type === 'player_mail_changed') window.dispatchEvent(new CustomEvent('hq-player-mail', { detail: e }));
       if (e.type.startsWith('whiteboard')) {
         this.whiteboards.dispatchEvent(new CustomEvent(e.type, { detail: e }));
       } else if (e.type === 'transcript') {
@@ -161,6 +177,8 @@ class Client {
       } else if (e.type === 'account_login_output') {
         this.loginHistory.set(e.accountId, ((this.loginHistory.get(e.accountId) ?? '') + e.data).slice(-200_000));
         this.accountLogins.dispatchEvent(new CustomEvent(e.accountId, { detail: e.data }));
+      } else if (e.type === 'rtc_signal') {
+        this.rtc.dispatchEvent(new CustomEvent('signal', { detail: e }));
       } else if (e.type === 'terminal_exit') {
         this.terminal.dispatchEvent(new CustomEvent('exit', { detail: e.code }));
       } else if (this.state.world) {
@@ -181,7 +199,8 @@ class Client {
     const agent = world.agents.find((a) => a.id === t.agentId)?.name ?? 'the agent';
     const owner = world.users.find((u) => u.id === t.ownerId)?.name ?? 'Its owner';
     const text = t.status === 'approved' ? `${owner} approved: ${agent} now works on your account.` : `${owner} declined your request to take over ${agent}.`;
-    window.dispatchEvent(new CustomEvent(t.status === 'approved' ? 'hq-notice' : 'hq-error', { detail: text }));
+    if (t.status === 'approved') notify({ icon: '⇄', title: 'Takeover', text });
+    else window.dispatchEvent(new CustomEvent('hq-error', { detail: text }));
   }
 
   request<K extends CommandName>(command: K, args: Commands[K]['args']): Promise<Commands[K]['result']> {
@@ -222,4 +241,20 @@ export async function run<K extends CommandName>(command: K, args: Commands[K]['
     window.dispatchEvent(new CustomEvent('hq-error', { detail: (err as Error).message }));
     throw err;
   }
+}
+
+declare global {
+  interface Window {
+    /** The desktop app's bridge (apps/desktop/preload.cjs); absent in a browser. */
+    agentHQ?: { pickFolder(defaultPath?: string | null): Promise<string | null> };
+  }
+}
+
+/**
+ * The system's folder chooser: the desktop app's own dialog or, in a browser,
+ * one the host (or your runner) opens on its screen. Resolves null when cancelled.
+ */
+export async function pickFolder(defaultPath?: string): Promise<string | null> {
+  if (window.agentHQ?.pickFolder) return window.agentHQ.pickFolder(defaultPath || null);
+  return (await client.request('pick_folder', { defaultPath: defaultPath || null })).path;
 }

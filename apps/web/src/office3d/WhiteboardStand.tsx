@@ -166,11 +166,14 @@ export function whiteboardCollider(position: Vec3, rotation = 0, width = 1.6, va
 
 /**
  * Where a floor's easel stands: by the task board on the back wall, or, on a
- * floor too narrow for it there, below the boss room.
+ * floor too narrow for it there (one desk pod), in the open space right of the
+ * desks, between the pod, the lounge and the side plant, turned towards the
+ * overview camera. Not below the boss room: that is the meeting room
+ * (layout.ts → meetingRoom), whose own whiteboard hangs on its partition.
  */
 export function easelPlacement(plan: FloorPlan): { position: Vec3; rotation: number } {
   const f = fixtures(plan);
   const x = f.whiteboard[0] + 2.7;
   if (x + 1.0 < f.elevator[0] - 0.95) return { position: [x, 0, plan.minZ + 1.0], rotation: -0.25 };
-  return { position: [plan.boss.minX + 2.2, 0, plan.boss.maxZ + 1.6], rotation: 0.6 };
+  return { position: [plan.maxX - 1.7, 0, (plan.minZ + plan.maxZ) / 2 + 1.0], rotation: 0.5 };
 }

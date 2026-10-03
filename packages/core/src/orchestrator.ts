@@ -9,7 +9,10 @@ import type {
   ClaudeAccount,
   CommandName,
   Commands,
+  DecorCommandName,
   HostCommandName,
+  PlayerMailCommandName,
+  MediaCommands,
   HostToRunner,
   ID,
   Mail,
@@ -27,11 +30,15 @@ import type {
 import { ACCOUNTS_DIR } from './accounts.ts';
 import type { Config } from './config.ts';
 import type { Db } from './db.ts';
+import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '@agent-hq/protocol/catalog';
+import type { Decor } from './decor.ts';
 import type { Economy } from './economy.ts';
 import { hasCommits, initRepo, originUrl, type HandoffResult } from './git.ts';
 import { handoffPrompt } from './handoff.ts';
 import { createGithubRepo, githubStatus, isRepoRoot, requireGithubOrigin } from './github.ts';
 import { Mailbox } from './mailbox.ts';
+import { isPlayerMailCommand, PlayerMailbox } from './player-mail.ts';
+import { MediaHub } from './media.ts';
 import { taskPrompt } from './memory.ts';
 import { RemoteRunner } from './runner/remote.ts';
 import type { Runner, RunnerSession } from './runner/runner.ts';
@@ -40,7 +47,8 @@ import type { BossTerminal } from './terminal.ts';
 
 /** Who is issuing a command: a player, or an agent through the HQ MCP tools. */
 export type Actor =
-  | { kind: 'user'; user: User }
+  /** `local`: connected from the host machine itself (see server.ts), so the host's screen is in front of them. */
+  | { kind: 'user'; user: User; local?: boolean }
   | { kind: 'agent'; agentId: ID; manager: boolean };
 
 interface LiveSession {
@@ -76,20 +84,17 @@ interface PendingApproval {
 const XP_PER_TURN = 10;
 /** How long a repo agent takes to walk between the balcony and a hot desk (the client animates it). */
 const WALK_MS = 2500;
-const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0662f'];
-const HAIRS = ['#2c1b10', '#3b2a1a', '#6a4e2e', '#b8860b', '#1c1c1c', '#a33b20', '#d8d8d8'];
-const HAIR_STYLES: Appearance['hairStyle'][] = ['short', 'long', 'bun', 'bald'];
 
 const OWNER_ONLY = new Set<CommandName>([
   'create_building', 'update_building', 'remove_building', 'create_floor', 'update_floor', 'remove_floor',
   'create_project', 'remove_project', 'update_settings', 'create_invite', 'list_invites', 'revoke_invite',
   'remove_member', 'terminal_open', 'terminal_input', 'terminal_resize',
-  'link_project_github', 'set_github_token', 'get_github_status',
+  'link_project_github', 'set_github_token', 'get_github_status', 'set_voice_settings',
 ]);
 const MANAGER_COMMANDS = new Set<CommandName>(['create_task', 'assign_task']);
 
 const pick = <T>(list: T[]) => list[Math.floor(Math.random() * list.length)];
-const randomAppearance = (shirt: string): Appearance => ({ skin: pick(SKINS), hair: pick(HAIRS), shirt, hairStyle: pick(HAIR_STYLES) });
+const randomAppearance = (shirt: string): Appearance => ({ skin: pick(SKIN_TONES), hair: pick(HAIR_COLORS), shirt, hairStyle: pick(HAIR_STYLES) });
 
 function requireText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} is required`);
@@ -131,6 +136,8 @@ export class Orchestrator {
   /** Agent terminal output, for the server to relay to viewers. */
   readonly terminals = new EventEmitter<{ data: [ID, string] }>();
   private readonly mailbox: Mailbox;
+  /** Player-to-player e-mail (see player-mail.ts). */
+  private readonly playerMail: PlayerMailbox;
   /** Repo agents walking between the balcony and a hot desk. */
   private readonly walks = new Map<ID, NodeJS.Timeout>();
   /** Events for a single player (e.g. their account login terminal), for the server to deliver. */
@@ -140,8 +147,12 @@ export class Orchestrator {
   /** In-flight account status checks, per player. */
   private readonly refreshing = new Map<ID, Promise<ClaudeAccount[]>>();
   private accountTimer: NodeJS.Timeout | null = null;
+  /** Voice chat and meeting-room screen sharing: who is in voice, who shares, signaling relay. */
+  readonly media: MediaHub;
   /** Tycoon: the office's economy (set by OfficeHost). Gates hiring in career mode. */
   economy: Economy | null = null;
+  /** Office customization: decorations and desk setups (set by OfficeHost). */
+  decor: Decor | null = null;
 
   constructor(store: Store, db: Db, config: Config, terminal: BossTerminal) {
     this.store = store;
@@ -149,6 +160,8 @@ export class Orchestrator {
     this.config = config;
     this.terminal = terminal;
     this.mailbox = new Mailbox(db);
+    this.playerMail = new PlayerMailbox(db, () => this.store.all('user'), (userId, event) => this.userEvents.emit('event', userId, event));
+    this.media = new MediaHub(store, db, (userId, event) => this.userEvents.emit('event', userId, event));
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -263,6 +276,7 @@ export class Orchestrator {
     if (n > 0 || !this.store.get('user', userId)) return;
     this.store.touch('user', userId, { online: false });
     if (this.presence.delete(userId)) this.store.broadcast({ type: 'presence_left', userId });
+    this.media.gone(userId);
   }
 
   attachRunner(userId: ID, send: (msg: HostToRunner) => void): RemoteRunner {
@@ -309,6 +323,7 @@ export class Orchestrator {
       users: this.store.all('user'),
       accounts: this.store.all('account'),
       mail: actor.kind === 'user' ? this.mailbox.inbox(you.id) : [],
+      playerMail: { unread: actor.kind === 'user' ? this.playerMail.unread(you.id) : 0 },
       buildings: this.store.all('building'),
       floors: this.store.all('floor'),
       projects: this.store.all('project'),
@@ -318,17 +333,31 @@ export class Orchestrator {
       settings: this.store.settings,
       rateLimits: this.store.rateLimits.get(you.id) ?? null,
       presence: [...this.presence.values()],
+      // Voice and screen shares are for players only.
+      ...(actor.kind === 'user' ? this.media.snapshot() : { voice: [], screenShares: [] }),
       takeovers: this.store.all('takeover'),
       terminalAvailable: you.role === 'owner' && actor.kind === 'user',
       office: this.economy?.office ?? null,
       economy: this.economy?.summary() ?? null,
+      decor: this.decor?.items() ?? [],
+      desks: this.decor?.deskSetups() ?? [],
     };
   }
 
   // ------------------------------------------------------------------ commands
 
   async handle<K extends CommandName>(command: K, args: Commands[K]['args'], actor: Actor): Promise<Commands[K]['result']> {
-    const handler = (this.handlers as Record<string, (a: unknown, u: User, actor: Actor) => unknown>)[command];
+    if (isPlayerMailCommand(command)) {
+      if (actor.kind !== 'user') throw new Error('Only players have mail');
+      return this.playerMail.handle(command, args as never, actor.user) as Commands[K]['result'];
+    }
+    // Office customization (decorate mode) has its own module and permission rules; players only.
+    if (this.decor?.handles(command)) {
+      if (actor.kind !== 'user') throw new Error('Agents cannot decorate');
+      return this.decor.handle(command, args as never, actor.user) as Commands[K]['result'];
+    }
+    const handler = (this.handlers as Record<string, (a: unknown, u: User, actor: Actor) => unknown>)[command]
+      ?? (this.media.handlers as Record<string, ((a: unknown, u: User) => unknown) | undefined>)[command];
     if (!handler) throw new Error(`Unknown command: ${command}`);
     let user: User;
     if (actor.kind === 'agent') {
@@ -576,9 +605,12 @@ export class Orchestrator {
     return this.store.require('agent', agentId);
   }
 
-  /** Host commands (offices, economy) are handled by OfficeHost, whiteboards by Whiteboards (both routed by the server), not here. */
+  /**
+   * Host commands (offices, economy) are handled by OfficeHost, whiteboards by Whiteboards (both routed by the server),
+   * player mail by PlayerMailbox, decorations by Decor and voice/screen sharing by MediaHub (see handle), not here.
+   */
   private readonly handlers: {
-    [K in Exclude<CommandName, HostCommandName | WhiteboardCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
+    [K in Exclude<CommandName, HostCommandName | WhiteboardCommandName | PlayerMailCommandName | keyof MediaCommands | DecorCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
   } = {
     // ---- world
     create_building: ({ name, kind, color }) => {
@@ -593,7 +625,11 @@ export class Orchestrator {
       return building;
     },
 
-    update_building: ({ id, patch }) => this.store.patch('building', id, patch),
+    update_building: ({ id, patch }) => {
+      // The rooftop sign is free text shown to everyone: keep it short (empty = the company name).
+      if (patch.sign !== undefined) patch = { ...patch, sign: typeof patch.sign === 'string' ? patch.sign.trim().slice(0, 40) || null : null };
+      return this.store.patch('building', id, patch);
+    },
 
     remove_building: ({ id }) => {
       const floors = this.store.all('floor').filter((f) => f.buildingId === id);
@@ -668,6 +704,17 @@ export class Orchestrator {
       return { configured, source, login };
     },
 
+    pick_folder: async ({ defaultPath }, user, actor) => {
+      // The dialog opens on the screen of the machine running your agents.
+      if (user.id === this.owner().id && !(actor.kind === 'user' && actor.local)) {
+        throw new Error('The folder dialog opens on the host computer\'s screen, so it only works from a browser on that computer. Type the folder path instead.');
+      }
+      const runner = this.runnerOf(user.id);
+      if (!runner) throw new Error('Your machine is not connected: start your runner (Team → Run your agents) to browse its folders, or type the path.');
+      const start = typeof defaultPath === 'string' && defaultPath.trim() ? defaultPath.trim() : null;
+      return { path: await runner.pickFolder(start) };
+    },
+
     remove_project: async ({ id }) => {
       if (this.store.all('task').some((t) => t.projectId === id && t.status === 'in_progress')) {
         throw new Error('Project has tasks in progress');
@@ -710,7 +757,7 @@ export class Orchestrator {
         integrations: (integrations ?? []).filter((i) => known.has(i)),
         floorId,
         ownerId: user.id,
-        appearance: appearance ?? { skin: pick(SKINS), hair: pick(HAIRS), shirt: pick(PALETTE), hairStyle: pick(HAIR_STYLES) },
+        appearance: appearance ?? { skin: pick(SKIN_TONES), hair: pick(HAIR_COLORS), shirt: pick(PALETTE), hairStyle: pick(HAIR_STYLES) },
         status: online ? 'idle' : 'offline',
         activity: null,
         currentTaskId: null,
@@ -1078,7 +1125,9 @@ export class Orchestrator {
           if (!i.config || typeof i.config !== 'object') throw new Error(`Integration ${i.name} needs a config object`);
         }
       }
-      const settings = this.store.setSettings(patch);
+      // Voice settings have their own command: the TURN credential must never land in the broadcast settings.
+      const { voice: _voice, ...rest } = patch;
+      const settings = this.store.setSettings(rest);
       this.dispatch();
       return settings;
     },
@@ -1118,6 +1167,7 @@ export class Orchestrator {
         this.logins.delete(acc.id);
         this.store.remove('account', acc.id);
       }
+      this.media.gone(id);
       this.store.remove('user', id);
       return null;
     },

@@ -331,6 +331,12 @@ button.tag { cursor: pointer; }
 .form-actions button { min-width: 96px; padding: 8px 16px; }
 .input-with-btn { display: flex; gap: 6px; align-items: center; }
 .input-with-btn .icon-btn { width: 34px; height: 34px; font-size: 17px; border: 1px solid var(--border); }
+.input-with-btn input { min-width: 0; }
+.input-with-btn button.browse { flex: none; white-space: nowrap; font-weight: 500; }
+.folder-note { font-weight: 400; }
+/* A checkbox next to an input in a two-column row lines up with the input, not its label. */
+.form .grid2 > label.check { align-self: end; min-height: 35px; align-items: center; }
+.form .grid2 > label.check input { margin-top: 0; }
 details.advanced { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 details.advanced > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 details.advanced[open] { display: flex; flex-direction: column; gap: 12px; }
@@ -445,6 +451,10 @@ table.usage tbody tr:last-child > * { border-bottom: 0; }
 .tabs.inline button { background: transparent; color: var(--text-2); border-radius: 999px; padding: 6px 14px; }
 .tabs.inline button:hover:not(.active) { background: var(--surface-3); filter: none; }
 .tabs.inline button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); }
+/* A two-way choice inside a form: fills the row in equal halves, stacks on phones. */
+.tabs.inline.segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border-radius: var(--radius); margin-bottom: 0; }
+.tabs.inline.segmented button { border-radius: 9px; padding: 7px 10px; line-height: 1.25; }
+@media (max-width: 480px) { .tabs.inline.segmented { grid-auto-flow: row; } }
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .settings-grid .span2 { grid-column: 1 / -1; }
 .field { display: flex; flex-direction: column; gap: 6px; }
@@ -519,6 +529,9 @@ input[role='switch']:checked::after { transform: translateX(16px); }
 /* ---------- balcony crew (repo agents), boss computer inbox, GitHub projects */
 .tag.repo-agent { border-color: #9b7a58; background: #fffaf3; }
 .tag.repo-agent.busy { border-style: dashed; }
+.tag.sign.balcony-empty { border-style: dashed; border-color: #9b7a58; font: inherit; font-size: 12px; font-weight: 600; }
+.tag.sign.balcony-empty small { font-weight: 400; color: #5c6470; }
+.balcony-howto pre { margin: 0; }
 .mail-badge { margin-left: 6px; background: var(--error); color: #fff; border-radius: 999px; padding: 0 6px; font-size: 11px; }
 .inbox { display: grid; grid-template-columns: minmax(230px, 300px) 1fr; gap: 16px; height: min(64vh, 620px); }
 .mail-list { list-style: none; margin: 0; padding: 0 10px 0 0; overflow: auto; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
@@ -549,4 +562,56 @@ input[role='switch']:checked::after { transform: translateX(16px); }
 @media (max-width: 900px) {
   .inbox { grid-template-columns: 1fr; height: auto; }
   .mail-list { border-right: none; padding-right: 0; max-height: 30vh; }
+}
+
+/* ---------- voice chat and the meeting room (components/Voice.tsx, office3d/MeetingRoom.tsx) */
+.voice-dock { position: absolute; right: 16px; bottom: 16px; z-index: 9; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; width: min(340px, calc(100% - 32px)); pointer-events: none; }
+.voice-dock > * { pointer-events: auto; }
+.voice-dock > .voice-bar, .voice-dock > .meeting-card, .voice-dock > .voice-hint, .voice-dock > .voice-panel { position: relative; z-index: 7; }
+.voice-bar, .meeting-card, .voice-hint { background: var(--glass); backdrop-filter: blur(12px); border: 1px solid var(--border); box-shadow: var(--shadow-1); }
+.voice-bar { display: flex; align-items: center; gap: 6px; padding: 5px; border-radius: 999px; animation: pop-in 0.2s ease-out; }
+.voice-note { font-size: 12px; color: var(--text-2); padding: 0 6px 0 8px; white-space: nowrap; }
+.mic-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 10px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); border-color: var(--border); font-size: 13px; white-space: nowrap; }
+.mic-btn:hover:not(:disabled) { filter: none; background: var(--surface-3); }
+.mic-btn.armed { background: color-mix(in srgb, var(--waiting) 14%, var(--surface)); color: var(--text); border-color: color-mix(in srgb, var(--waiting) 45%, transparent); }
+.mic-btn.live { background: var(--error); color: #fff; border-color: var(--error); box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 30%, transparent); }
+.mic-btn.live:hover:not(:disabled) { background: var(--error); filter: brightness(1.08); }
+.live-label { font-weight: 700; letter-spacing: 0.02em; animation: pulse 1.4s ease-in-out infinite; }
+.meeting-chip { height: 32px; }
+.voice-bar .seg { flex: none; }
+.voice-bar .seg button { white-space: nowrap; }
+.voice-people-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; margin-left: auto; padding: 0 10px 0 6px; border-radius: 999px; background: transparent; color: var(--text-2); border-color: transparent; }
+.voice-people-btn:hover:not(:disabled), .voice-people-btn.open { background: var(--surface-2); filter: none; }
+.avatar.talker { transition: box-shadow 0.12s ease; }
+.avatar.talker.speaking { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--working); }
+.mic-dot { display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: var(--error); vertical-align: middle; }
+.voice-hint { font-size: 12px; padding: 4px 10px; border-radius: 999px; color: var(--text-2); }
+.voice-panel { width: 100%; max-height: min(70vh, 560px); overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px; transform-origin: bottom right; z-index: 9; }
+.voice-head { display: flex; align-items: center; gap: 8px; }
+.voice-head strong { flex: 1; }
+.toggle.compact { border-top: none; padding: 0; gap: 6px; flex: none; }
+.voice-panel .seg button { padding: 3px 10px; }
+.voice-people { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.voice-people li { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 2px; border-radius: var(--radius-sm); opacity: 0.75; }
+.voice-people li.audible { opacity: 1; }
+.voice-person { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 13px; }
+.voice-person small { color: var(--muted); font-size: 11px; }
+.voice-people input[type='range'] { width: 84px; flex: none; }
+.icon-btn.danger.on { color: var(--error); }
+.meeting-card { width: 100%; border-radius: var(--radius-lg); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; border-left: 4px solid var(--accent); animation: note-in 0.22s ease-out; }
+.meeting-card.sharing { border-left-color: var(--error); }
+.meeting-top { display: flex; gap: 10px; align-items: flex-start; }
+.meeting-members { display: flex !important; align-items: center; gap: 6px; flex-wrap: wrap; -webkit-line-clamp: unset !important; }
+.meeting-members .avatar + .avatar { margin-left: -4px; }
+.share-line { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text); }
+.share-line.mine { color: var(--error); }
+.rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--error); flex: none; animation: pulse 1.4s ease-in-out infinite; }
+.tag.player.speaking { box-shadow: 0 0 0 3px color-mix(in srgb, var(--working) 55%, transparent), 0 3px 10px rgb(0 0 0 / 0.18); }
+.speaking-icon { font-size: 11px; line-height: 1; }
+.tag.screen-caption { font-size: 13px; padding: 5px 12px; }
+.screen-overlay { position: fixed; inset: 0; z-index: 11; display: grid; place-items: center; padding: 24px; background: rgb(10 12 16 / 0.7); animation: fade-in 0.15s ease-out; }
+.screen-frame { width: min(1600px, 100%); height: min(1000px, 100%); display: flex; flex-direction: column; background: #1c1e24; border-radius: 18px; padding: 10px 14px 14px; box-shadow: 0 30px 80px rgb(0 0 0 / 0.55); }
+.screen-video { flex: 1; min-height: 0; width: 100%; background: #000; border-radius: 8px; object-fit: contain; }
+@media (max-width: 900px) {
+  .voice-dock { right: 8px; bottom: 62px; width: min(340px, calc(100% - 16px)); }
 }

@@ -87,6 +87,7 @@ const FILTERS: Array<{ value: LedgerFilter | null; label: string }> = [
   { value: 'revenue', label: 'Shipped work' },
   { value: 'token_cost', label: 'Token costs' },
   { value: 'hiring_fee', label: 'Hiring' },
+  { value: 'furnishing', label: 'Furnishing' },
 ];
 
 const KIND_ICON: Record<LedgerEntry['kind'], string> = {
@@ -96,6 +97,7 @@ const KIND_ICON: Record<LedgerEntry['kind'], string> = {
   bonus: '⭐',
   token_cost: '🔥',
   hiring_fee: '🤝',
+  furnishing: '🛋️',
   adjustment: '✏️',
 };
 

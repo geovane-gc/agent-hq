@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   Agent,
   EconomySummary,
@@ -11,7 +12,7 @@ import type {
 } from '@agent-hq/protocol';
 import type { Db } from './db.ts';
 import { fetchOrigin, hasOrigin, inspectBranch } from './delivery.ts';
-import { ECONOMY, hiringFeeFor, payoutFor, round2, startingCashFor } from './economy-config.ts';
+import { ECONOMY, furnishingPriceFor, hiringFeeFor, payoutFor, round2, startingCashFor } from './economy-config.ts';
 import type { Store } from './store.ts';
 
 // The office economy (tycoon phase 1): a ledger of transactions per office.
@@ -53,10 +54,10 @@ const SCHEMA = `
     checked_at INTEGER
   );`;
 
-const KINDS: LedgerKind[] = ['starting_cash', 'revenue', 'commission', 'bonus', 'token_cost', 'hiring_fee', 'adjustment'];
+const KINDS: LedgerKind[] = ['starting_cash', 'revenue', 'commission', 'bonus', 'token_cost', 'hiring_fee', 'furnishing', 'adjustment'];
 const INCOME: LedgerKind[] = ['revenue', 'commission', 'bonus'];
 /** The ledger's "expense" filter: everything that costs cash. */
-const EXPENSE: LedgerKind[] = ['token_cost', 'hiring_fee'];
+const EXPENSE: LedgerKind[] = ['token_cost', 'hiring_fee', 'furnishing'];
 const inList = (kinds: LedgerKind[]) => kinds.map((k) => `'${k}'`).join(', ');
 
 interface EconomyState {
@@ -156,7 +157,7 @@ export class Economy {
          COALESCE(SUM(amount), 0) AS cash,
          COALESCE(SUM(CASE WHEN kind IN (${inList(INCOME)}) THEN amount END), 0) AS revenue,
          COALESCE(-SUM(CASE WHEN kind = 'token_cost' THEN amount END), 0) AS expenses,
-         COALESCE(-SUM(CASE WHEN kind = 'hiring_fee' THEN amount END), 0) AS invested,
+         COALESCE(-SUM(CASE WHEN kind IN ('hiring_fee', 'furnishing') THEN amount END), 0) AS invested,
          COALESCE(SUM(CASE WHEN kind IN (${inList(INCOME)}) AND ts >= ? THEN amount END), 0) AS today
        FROM ledger`,
     ).get(startOfToday()) as Record<string, number>;
@@ -205,6 +206,31 @@ export class Economy {
     const fee = hiringFeeFor(this.office.mode);
     if (fee <= 0) return;
     this.book({ kind: 'hiring_fee', amount: -fee, description: `Hiring fee: ${agent.name} (${agent.role})`, agentId: agent.id, ref: `hire:${agent.id}` });
+  }
+
+  // ------------------------------------------------------------------ furnishings (decorate mode)
+
+  /** What a catalog price costs in this office: the price in career, nothing in sandbox. */
+  furnishingCost(price: number): number {
+    return furnishingPriceFor(this.office.mode, price);
+  }
+
+  /** Career: refuses a purchase the company can't afford. Sandbox never gets here with a cost. */
+  assertCanAfford(amount: number, what: string) {
+    if (amount <= 0) return;
+    const { cash } = this.summary();
+    if (cash < amount) {
+      throw new Error(`Not enough cash for ${what}: it costs ${usd(amount)} and you have ${usd(cash)} (${usd(amount - cash)} missing).`);
+    }
+  }
+
+  /**
+   * Books a furnishing purchase (negative) or sale (positive). An investment,
+   * like hiring: it moves cash, not profit.
+   */
+  bookFurnishing(amount: number, description: string, ref: string, agentId: ID | null = null) {
+    if (Math.abs(amount) < 0.005) return;
+    this.book({ kind: 'furnishing', amount, description, agentId, ref: `furnish:${ref}:${randomUUID().slice(0, 8)}` });
   }
 
   // ------------------------------------------------------------------ expenses: token costs
