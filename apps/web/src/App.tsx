@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ID, Snapshot } from '@agent-hq/protocol';
 import { useClient } from './api.ts';
+import { TakeoverAlerts } from './components/Accounts.tsx';
 import { AgentPanel } from './components/AgentPanel.tsx';
 import { AgentTerminal } from './components/AgentTerminal.tsx';
 import { Board } from './components/Board.tsx';
@@ -243,6 +244,7 @@ export function App() {
       )}
 
       <ApprovalAlerts world={world} onOpen={openAgent} />
+      <TakeoverAlerts world={world} onOpen={openAgent} />
 
       {terminalAgentId && view === 'office' && (
         <AgentTerminal

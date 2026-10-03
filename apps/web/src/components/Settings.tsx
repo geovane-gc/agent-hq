@@ -49,6 +49,13 @@ function General({ world }: { world: Snapshot }) {
               onChange={(e) => run('update_settings', { patch: { gamification: e.target.checked } }).catch(() => {})} />
             Gamification: XP and levels for agents
           </label>
+          <label>Taking over another player's agent
+            <select value={world.settings.takeoverPolicy}
+              onChange={(e) => run('update_settings', { patch: { takeoverPolicy: e.target.value as 'approval' | 'free' } }).catch(() => {})}>
+              <option value="approval">Needs the approval of the player whose account runs it</option>
+              <option value="free">Allowed right away</option>
+            </select>
+          </label>
         </>
       )}
     </div>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Agent, Appearance, Building, BuildingKind, Floor, FloorMaterial, ID, PermissionMode, Snapshot } from '@agent-hq/protocol';
 import { client } from '../api.ts';
+import { assignBlocked } from './Accounts.tsx';
 import { FormModal } from './Modal.tsx';
 
 const str = (d: FormData, k: string) => String(d.get(k) ?? '').trim();
@@ -173,7 +174,14 @@ export function NewTaskModal(props: { world: Snapshot; projectIds: ID[]; assigne
       <label>Assignee
         <select name="assigneeId" defaultValue={props.assigneeId ?? ''}>
           <option value="">{props.world.settings.dispatchMode === 'auto' ? 'Anyone free on the floor (auto)' : 'Unassigned'}</option>
-          {props.world.agents.map((a) => <option key={a.id} value={a.id}>{a.name} — {a.role}{a.isManager ? ' (manager)' : ''}</option>)}
+          {props.world.agents.map((a) => {
+            const why = assignBlocked(props.world, a);
+            return (
+              <option key={a.id} value={a.id} disabled={!!why} title={why ?? undefined}>
+                {a.name} — {a.role}{a.isManager ? ' (coordinator)' : ''}{why ? ' · other player\'s account' : ''}
+              </option>
+            );
+          })}
         </select>
       </label>
     </FormModal>

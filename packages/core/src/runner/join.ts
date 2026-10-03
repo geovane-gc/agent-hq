@@ -103,7 +103,7 @@ export async function join(argv: string[]) {
       }
       // Claude accounts: logins happen here, on your machine; the host only sees email and plan.
       case 'account_status': return reply(op.requestKey, () => runner!.accountStatus(op.configDirs));
-      case 'account_remove': return reply(op.requestKey, () => runner!.accountRemove(op.configDir));
+      case 'account_remove': return reply(op.requestKey, () => runner!.accountRemove(op.configDir, op.email ?? null));
       case 'account_login': {
         const key = op.requestKey;
         try {

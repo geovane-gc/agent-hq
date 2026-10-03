@@ -139,8 +139,8 @@ export function AgentPanel(props: { world: Snapshot; agentId: ID; onClose: () =>
         </form>
       ) : (
         <p className="composer hint">
-          You're watching {owner?.name}'s agent: it runs on their Claude account, so only they can message it. Assign it work
-          through the board, or take it over from its computer to continue on your own account.
+          You're watching {owner?.name}'s agent: it runs on their Claude account, so only they can message it or give it
+          work. Take it over from its computer to continue on your own account.
         </p>
       )}
 

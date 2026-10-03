@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ID, Project, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
-import { accountStatus, ensureSessionInConfigDir, removeAccountDir, resolveConfigDir, startAccountLogin, type AccountStatus } from '../accounts.ts';
+import {
+  accountStatus, ensureSessionInConfigDir, removeAccount, resolveConfigDir, startAccountLogin, type AccountRemoval, type AccountStatus,
+} from '../accounts.ts';
 import type { AgentAdapter, AgentSession, PermissionDecision } from '../adapters/adapter.ts';
 import { addWorktree, handoffBranch, removeWorktree, syncBranchFromOrigin, type HandoffResult } from '../git.ts';
 import { platformMcpConfig } from '../integrations.ts';
@@ -155,8 +157,8 @@ export class LocalRunner implements Runner {
     return startAccountLogin(this.dataDir, configDir, onEvent);
   }
 
-  async accountRemove(configDir: string): Promise<void> {
-    removeAccountDir(this.dataDir, configDir);
+  accountRemove(configDir: string, email: string | null): Promise<AccountRemoval> {
+    return removeAccount(this.dataDir, configDir, email);
   }
 
   async handoff(project: Project, task: Task): Promise<HandoffResult> {
