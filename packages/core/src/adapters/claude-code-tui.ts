@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { AgentSession, PermissionDecision, SessionEvent, SessionOptions } from './adapter.ts';
-import { describeToolUse } from './claude-code.ts';
+import { claudeCommand, describeToolUse } from './claude-code.ts';
 import { cleanEnv } from './env.ts';
 
 // Runs Claude Code's real interactive terminal UI in a pseudo-terminal, so
@@ -98,7 +98,7 @@ export class ClaudeCodeTuiSession implements AgentSession {
     if (Object.keys(opts.mcpServers).length) args.push('--mcp-config', JSON.stringify({ mcpServers: opts.mcpServers }));
     for (const dir of opts.addDirs) args.push('--add-dir', dir);
 
-    this.pty = pty.spawn(binary, args, {
+    this.pty = pty.spawn(...claudeCommand(binary, args), {
       name: 'xterm-256color',
       cols: 120,
       rows: 34,
