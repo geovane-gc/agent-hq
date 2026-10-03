@@ -8,6 +8,8 @@ import { Avatars, FloorPicker, MainMenu, Notifications, StatusCard, type MenuIte
 import { AgentModal, BuildingModal, FloorModal, NewFloorModal, NewProjectModal, NewTaskModal } from './components/forms.tsx';
 import { Modal } from './components/Modal.tsx';
 import { SettingsModal } from './components/Settings.tsx';
+import { openFinances } from './components/Finance.tsx';
+import { StartScreen, TycoonLayer, openStartScreen } from './components/StartScreen.tsx';
 import { BossTerminal } from './components/Terminal.tsx';
 import { UsageModal } from './components/Usage.tsx';
 import { floorLabel } from './format.ts';
@@ -36,7 +38,7 @@ function store(key: string, value: string) {
 }
 
 export function App() {
-  const { connection, world } = useClient();
+  const { connection, world, lobby } = useClient();
   const [view, setView] = useState<'campus' | 'office'>(() => remember('hq-view', 'office'));
   const [mode, setMode] = useState<CameraMode>(() => remember('hq-camera', 'iso'));
   const [floorId, setFloorId] = useState<ID | null>(() => remember<string>('hq-floor', '') || null);
@@ -81,6 +83,7 @@ export function App() {
   if (connection === 'unauthorized') {
     return <div className="splash"><h1>Agent HQ</h1><p>Open the link printed by the server, or an invite link from the office owner.</p></div>;
   }
+  if (lobby) return <StartScreen offices={lobby} />; // tycoon: no office yet
   if (!world) return <div className="splash"><h1>Agent HQ</h1><p className="muted">Connecting…</p></div>;
 
   const owner = world.you.role === 'owner';
@@ -138,11 +141,13 @@ export function App() {
   const menuGroups: MenuItem[][] = [
     officeItems,
     [
+      ...(world.economy ? [{ icon: '💼', label: 'Finances', hint: 'Cash, profit and the ledger', onSelect: openFinances }] : []),
       { icon: '📊', label: 'Usage', hint: 'Tokens and cost per agent and project', onSelect: () => setOverlay({ kind: 'usage' }) },
       { icon: '👥', label: 'Team', hint: 'Players and invites', badge: <Avatars world={world} />, onSelect: () => setOverlay({ kind: 'settings', tab: 'team' }) },
       ...(world.terminalAvailable ? [{ icon: '👑', label: 'Boss terminal', hint: 'Your private shell', onSelect: () => setOverlay({ kind: 'terminal' }) }] : []),
       { icon: '⚙️', label: 'Settings', onSelect: () => setOverlay({ kind: 'settings' }) },
     ],
+    owner ? [{ icon: '🏠', label: 'Main menu', hint: world.office ? `${world.office.name} · new or saved offices` : 'New or saved offices', onSelect: openStartScreen }] : [],
   ];
 
   return (
@@ -257,6 +262,7 @@ export function App() {
       {overlay?.kind === 'terminal' && <BossTerminal onClose={close} />}
       {overlay?.kind === 'usage' && <UsageModal onClose={close} />}
       {overlay?.kind === 'settings' && <SettingsModal world={world} initial={overlay.tab} onClose={close} />}
+      <TycoonLayer world={world} />
     </div>
   );
 }

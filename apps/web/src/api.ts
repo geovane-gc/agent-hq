@@ -3,6 +3,7 @@ import type {
   CommandName,
   Commands,
   ID,
+  OfficeInfo,
   ServerEvent,
   ServerMessage,
   Snapshot,
@@ -15,6 +16,8 @@ interface State {
   connection: ConnectionState;
   world: Snapshot | null;
   transcripts: Record<ID, TranscriptEntry[]>;
+  /** Tycoon: set instead of `world` while the host has no office open (fresh install). */
+  lobby: OfficeInfo[] | null;
 }
 
 function readToken(): string | null {
@@ -62,12 +65,13 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'account_removed': return { ...world, accounts: without(world.accounts, e.id) };
     case 'presence': return { ...world, presence: [...world.presence.filter((p) => p.userId !== e.presence.userId), e.presence] };
     case 'presence_left': return { ...world, presence: world.presence.filter((p) => p.userId !== e.userId) };
+    case 'ledger': return { ...world, economy: e.economy };
     default: return world;
   }
 }
 
 class Client {
-  private state: State = { connection: 'connecting', world: null, transcripts: {} };
+  private state: State = { connection: 'connecting', world: null, transcripts: {}, lobby: null };
   private readonly listeners = new Set<() => void>();
   private ws: WebSocket | null = null;
   private nextId = 1;
@@ -127,9 +131,13 @@ class Client {
   private onMessage(msg: ServerMessage) {
     if (msg.type === 'snapshot') {
       // Transcripts may have moved on while disconnected; refetch lazily.
-      this.set({ connection: 'open', world: msg.snapshot, transcripts: {} });
+      this.set({ connection: 'open', world: msg.snapshot, transcripts: {}, lobby: null });
+    } else if (msg.type === 'lobby') {
+      this.set({ connection: 'open', world: null, transcripts: {}, lobby: msg.offices });
     } else if (msg.type === 'event') {
       const e = msg.event;
+      // Tycoon: lets the finance UI celebrate revenue (see components/Finance.tsx).
+      if (e.type === 'ledger') window.dispatchEvent(new CustomEvent('hq-ledger', { detail: e.entry }));
       if (e.type === 'transcript') {
         const list = this.state.transcripts[e.entry.agentId];
         if (list) this.set({ transcripts: { ...this.state.transcripts, [e.entry.agentId]: [...list, e.entry] } });

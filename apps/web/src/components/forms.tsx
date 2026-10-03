@@ -3,6 +3,7 @@ import type { Agent, Appearance, Building, BuildingKind, Floor, FloorMaterial, I
 import { COORDINATOR, MODELS } from '../agentUtil.ts';
 import { client } from '../api.ts';
 import { randomAgentName } from '../names.ts';
+import { HiringFeeNote } from './Finance.tsx';
 import { FormModal } from './Modal.tsx';
 
 const str = (d: FormData, k: string) => String(d.get(k) ?? '').trim();
@@ -86,6 +87,7 @@ export function AgentModal(props: { world: Snapshot; floorId: ID; agent?: Agent;
           : client.request('hire_agent', { ...fields, floorId: props.floorId });
       }}
     >
+      {!agent && <HiringFeeNote world={world} />}
       <div className="grid2">
         <label>Name
           <span className="input-with-btn">

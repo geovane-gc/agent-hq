@@ -46,6 +46,9 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `mcp/hq-mcp.ts` | Stdio MCP server giving agents `list_team`, `list_projects` and `list_tasks`; coordinators also get `create_task` and `assign_task` |
 | `integrations.ts` | Default optional MCP catalog and the Windows `cmd /c` wrapping for npx/uvx |
 | `terminal.ts` | Boss terminal |
+| `offices.ts` | Offices as separate saves (`<data>/offices.json`, one data dir each; a pre-offices install becomes the sandbox save "My office"). Opens one at a time and switches in-process; also answers the host commands (offices, ledger) |
+| `economy.ts`, `economy-config.ts` | The ledger: revenue for verified merged work (once per task), token costs as expenses, hiring fees and career-mode gating. Every balance number lives in `economy-config.ts` |
+| `delivery.ts` | Git checks behind revenue: is a task branch merged into the default branch (merge, rebase or squash), and how many lines changed |
 
 ### apps/web
 

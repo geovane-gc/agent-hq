@@ -9,6 +9,7 @@ import type {
   ClaudeAccount,
   CommandName,
   Commands,
+  HostCommandName,
   HostToRunner,
   ID,
   Presence,
@@ -22,6 +23,7 @@ import type {
 import { ACCOUNTS_DIR } from './accounts.ts';
 import type { Config } from './config.ts';
 import type { Db } from './db.ts';
+import type { Economy } from './economy.ts';
 import { hasCommits, initRepo, originUrl, type HandoffResult } from './git.ts';
 import { handoffPrompt } from './handoff.ts';
 import { taskPrompt } from './memory.ts';
@@ -112,6 +114,8 @@ export class Orchestrator {
   /** In-flight account status checks, per player. */
   private readonly refreshing = new Map<ID, Promise<ClaudeAccount[]>>();
   private accountTimer: NodeJS.Timeout | null = null;
+  /** Tycoon: the office's economy (set by OfficeHost). Gates hiring in career mode. */
+  economy: Economy | null = null;
 
   constructor(store: Store, db: Db, config: Config, terminal: BossTerminal) {
     this.store = store;
@@ -271,6 +275,8 @@ export class Orchestrator {
       rateLimits: this.store.rateLimits.get(you.id) ?? null,
       presence: [...this.presence.values()],
       terminalAvailable: you.role === 'owner' && actor.kind === 'user',
+      office: this.economy?.office ?? null,
+      economy: this.economy?.summary() ?? null,
     };
   }
 
@@ -411,8 +417,9 @@ export class Orchestrator {
     return this.store.require('agent', agent.id);
   }
 
+  /** Host commands (offices, economy) are handled by OfficeHost, not here. */
   private readonly handlers: {
-    [K in CommandName]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
+    [K in Exclude<CommandName, HostCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
   } = {
     // ---- world
     create_building: ({ name, kind, color }) => {
@@ -494,6 +501,7 @@ export class Orchestrator {
       if (this.store.all('agent').filter((a) => a.floorId === floorId).length >= floor.desks) {
         throw new Error(`No free desk on ${floor.name}. Expand the floor first.`);
       }
+      this.economy?.assertCanHire(); // tycoon: career mode needs the hiring fee in cash
       const known = new Set(this.store.settings.integrations.map((i) => i.id));
       const online = user.id === this.owner().id || this.remoteRunners.has(user.id);
       const agent = this.store.put('agent', {
@@ -519,6 +527,7 @@ export class Orchestrator {
         xp: 0,
         createdAt: Date.now(),
       });
+      this.economy?.chargeHire(agent); // tycoon
       this.dispatch();
       return agent;
     },

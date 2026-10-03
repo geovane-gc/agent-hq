@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
-import type { Agent, AgentStatus, Building, Floor, ID, Snapshot, TaskStatus } from '@agent-hq/protocol';
+import type { Agent, AgentStatus, Building, Floor, ID, LedgerEntry, Snapshot, TaskStatus } from '@agent-hq/protocol';
 import { STATUS_LABEL } from '../agentUtil.ts';
-import { floorLabel, humanize, initials, toolLabel } from '../format.ts';
+import { floorLabel, humanize, initials, toolLabel, usd } from '../format.ts';
+import { CashBadge, openFinances } from './Finance.tsx';
 import { RateMeters } from './Usage.tsx';
 
 // The heads-up display: one status card, one menu, notification cards.
@@ -98,6 +99,7 @@ export function StatusCard(props: {
         ))}
       </div>
 
+      <CashBadge world={props.world} />
       <RateMeters limits={props.world.rateLimits} />
       {props.reconnecting && <div className="reconnecting"><span className="sdot status-error" /> Reconnecting…</div>}
     </section>
@@ -235,7 +237,14 @@ export function Notifications(props: { world: Snapshot; onOpenAgent: (id: ID) =>
   useEffect(() => {
     const on = (e: Event) => push({ id: `err-${Date.now()}-${Math.random()}`, tone: 'error', icon: '⚠️', title: 'That didn’t work', text: String((e as CustomEvent).detail) }, 8000);
     window.addEventListener('hq-error', on);
-    return () => window.removeEventListener('hq-error', on);
+    // Tycoon: revenue for merged work (see Finance.tsx).
+    const onLedger = (e: Event) => {
+      const entry = (e as CustomEvent<LedgerEntry>).detail;
+      if (entry.amount <= 0 || !['revenue', 'commission', 'bonus'].includes(entry.kind)) return;
+      push({ id: `ledger-${entry.id}`, tone: 'success', icon: '💰', title: `+${usd(entry.amount)} earned`, text: entry.description, action: { label: 'Finances', run: openFinances } }, 10000);
+    };
+    window.addEventListener('hq-ledger', onLedger);
+    return () => { window.removeEventListener('hq-error', on); window.removeEventListener('hq-ledger', onLedger); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

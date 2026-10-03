@@ -2,8 +2,9 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import type { ClientRequest, HostToRunner, RunnerMessage, ServerEvent, ServerMessage } from '@agent-hq/protocol';
+import type { ClientRequest, HostCommandName, HostToRunner, RunnerMessage, ServerEvent, ServerMessage } from '@agent-hq/protocol';
 import type { Config } from './config.ts';
+import { HOST_COMMANDS, type OfficeHost, type OpenOffice } from './offices.ts';
 import type { Actor, Orchestrator } from './orchestrator.ts';
 import type { Store } from './store.ts';
 import type { BossTerminal } from './terminal.ts';
@@ -36,7 +37,11 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   createReadStream(file).pipe(res);
 }
 
-export function startServer(config: Config, store: Store, orchestrator: Orchestrator, terminal: BossTerminal) {
+export function startServer(config: Config, host: OfficeHost, terminal: BossTerminal) {
+  // The open office (save). Reassigned when the owner switches offices; every
+  // connection is dropped then and clients reconnect to the new one.
+  let store!: Store;
+  let orchestrator!: Orchestrator;
   const http = createServer(serveStatic);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
   const clients = new Map<WebSocket, Actor>();
@@ -54,6 +59,12 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
+      if (!host.current) {
+        // No office yet (fresh install): only the owner, to create one.
+        if (url.searchParams.get('token') !== config.ownerToken || url.searchParams.get('runner') === '1') ws.close(4001, 'Invalid token');
+        else attachLobby(ws);
+        return;
+      }
       const actor = orchestrator.authenticate(url.searchParams.get('token') ?? '');
       if (!actor) {
         ws.close(4001, 'Invalid token');
@@ -68,11 +79,12 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
       if (actor.kind === 'user') orchestrator.connected(actor.user.id);
       send(ws, { type: 'snapshot', snapshot: orchestrator.snapshot(actor) });
       ws.on('message', (raw) => onMessage(ws, actor, raw.toString()));
+      const office = orchestrator; // the connection belongs to the office open when it was made
       ws.on('close', () => {
-        for (const agentId of watching.get(ws) ?? []) orchestrator.watch(agentId, -1);
+        for (const agentId of watching.get(ws) ?? []) office.watch(agentId, -1);
         watching.delete(ws);
         clients.delete(ws);
-        if (actor.kind === 'user') orchestrator.disconnected(actor.user.id);
+        if (actor.kind === 'user') office.disconnected(actor.user.id);
       });
     });
   });
@@ -97,6 +109,34 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
     ws.on('close', () => orchestrator.detachRunner(userId, runner));
   }
 
+  /** The owner's connection while no office is open: office commands only. */
+  function attachLobby(ws: WebSocket) {
+    lobby.add(ws);
+    send(ws, { type: 'lobby', offices: host.list() });
+    ws.on('message', async (raw) => {
+      let req: ClientRequest;
+      try { req = JSON.parse(raw.toString()); } catch { return; }
+      if (req.type !== 'request' || typeof req.id !== 'number') return;
+      if (!HOST_COMMANDS.has(req.command)) {
+        send(ws, { type: 'reply', id: req.id, ok: false, error: 'Create or open an office first' });
+        return;
+      }
+      await runHostCommand(ws, req, true);
+    });
+    ws.on('close', () => lobby.delete(ws));
+  }
+
+  /** Offices and economy commands, answered by the host (see offices.ts). */
+  async function runHostCommand(ws: WebSocket, req: ClientRequest, isOwner: boolean) {
+    try {
+      const { result, after } = await host.handle(req.command as HostCommandName, req.args as never, isOwner);
+      send(ws, { type: 'reply', id: req.id, ok: true, result: result ?? null });
+      await after?.();
+    } catch (err) {
+      send(ws, { type: 'reply', id: req.id, ok: false, error: (err as Error).message });
+    }
+  }
+
   function send(ws: WebSocket, msg: ServerMessage) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }
@@ -105,6 +145,10 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
     let req: ClientRequest;
     try { req = JSON.parse(raw); } catch { return; }
     if (req.type !== 'request' || typeof req.id !== 'number') return;
+    if (HOST_COMMANDS.has(req.command)) {
+      if (actor.kind !== 'user') return send(ws, { type: 'reply', id: req.id, ok: false, error: 'Not available to agents' });
+      return runHostCommand(ws, req, actor.user.role === 'owner');
+    }
     try {
       const result = await orchestrator.handle(req.command, req.args, actor);
       if (req.command === 'agent_terminal_open') {
@@ -127,15 +171,34 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
   }
 
   const isOwner = (a: Actor) => a.kind === 'user' && a.user.role === 'owner';
-  store.on('event', (event) => broadcast(event, event.type === 'rate_limits' ? (a) => a.kind === 'user' && a.user.id === event.userId : undefined));
-  terminal.on('data', (data) => broadcast({ type: 'terminal_output', data }, isOwner));
-  orchestrator.terminals.on('data', (agentId, data) => {
+  const onStoreEvent = (event: ServerEvent) => broadcast(event, event.type === 'rate_limits' ? (a) => a.kind === 'user' && a.user.id === event.userId : undefined);
+  const onAgentTerminal = (agentId: string, data: string) => {
     const msg = JSON.stringify({ type: 'event', event: { type: 'agent_terminal_output', agentId, data } } satisfies ServerMessage);
     for (const [ws, set] of watching) if (set.has(agentId) && ws.readyState === WebSocket.OPEN) ws.send(msg);
-  });
+  };
+  terminal.on('data', (data) => broadcast({ type: 'terminal_output', data }, isOwner));
   terminal.on('exit', (code) => broadcast({ type: 'terminal_exit', code }, isOwner));
   // e.g. a Claude login terminal: only its player sees it.
-  orchestrator.userEvents.on('event', (userId, event) => broadcast(event, (a) => a.kind === 'user' && a.user.id === userId));
+  const onUserEvent = (userId: string, event: ServerEvent) => broadcast(event, (a) => a.kind === 'user' && a.user.id === userId);
+
+  // ---- offices: wire the open office; drop every connection when it changes.
+  const lobby = new Set<WebSocket>();
+  const wire = (office: OpenOffice) => {
+    ({ store, orchestrator } = office);
+    store.on('event', onStoreEvent);
+    orchestrator.terminals.on('data', onAgentTerminal);
+    orchestrator.userEvents.on('event', onUserEvent);
+    for (const ws of lobby) ws.close(4000, 'Office opened');
+  };
+  host.on('opened', wire);
+  host.on('closed', (office) => {
+    office.store.off('event', onStoreEvent);
+    office.orchestrator.terminals.off('data', onAgentTerminal);
+    office.orchestrator.userEvents.off('event', onUserEvent);
+    // Runners and players reconnect on their own and land in the new office.
+    for (const ws of wss.clients) ws.close(4000, 'Office changed');
+  });
+  if (host.current) wire(host.current);
 
   return new Promise<{ close: () => void }>((resolve, reject) => {
     http.once('error', reject);
