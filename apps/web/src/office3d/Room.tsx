@@ -226,7 +226,7 @@ export function Room(props: {
   }, [plan]);
 
   const terminal: Interactable = props.onTerminal
-    ? { label: 'Boss computer — inbox', action: props.onTerminal }
+    ? { label: 'Boss computer — mail', action: props.onTerminal }
     : { label: 'Boss computer', action: () => {} };
 
   return (

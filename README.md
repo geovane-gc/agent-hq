@@ -62,8 +62,9 @@ into their monitor so you can type straight into their terminal.
   repository itself, agents that edit get their own worktree and branch). When it's done it mails you a report and goes
   back to the balcony. They can't be fired. Every floor has a balcony; until its projects define agents it only has
   empty benches (click them for how to add some, and to re-scan).
-- **Boss computer**: your inbox of reports (reply to keep the conversation going: the agent resumes the same Claude Code
-  session) and, for the owner, a private shell on the host.
+- **Boss computer**: your mail: reports from the crew (reply to keep the conversation going: the agent resumes the same
+  Claude Code session) and e-mail with your teammates, with their characters' portraits and a private, persistent
+  history. For the owner, also a private shell on the host. Mail is reachable from any agent's monitor and the menu too.
 - **Optional integrations**: give individual agents MCP servers for browser testing (Playwright), GitHub, Figma,
   Blender or Unity, or add your own.
 

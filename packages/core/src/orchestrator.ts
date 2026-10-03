@@ -10,6 +10,7 @@ import type {
   CommandName,
   Commands,
   HostCommandName,
+  PlayerMailCommandName,
   HostToRunner,
   ID,
   Mail,
@@ -32,6 +33,7 @@ import { hasCommits, initRepo, originUrl, type HandoffResult } from './git.ts';
 import { handoffPrompt } from './handoff.ts';
 import { createGithubRepo, githubStatus, isRepoRoot, requireGithubOrigin } from './github.ts';
 import { Mailbox } from './mailbox.ts';
+import { isPlayerMailCommand, PlayerMailbox } from './player-mail.ts';
 import { taskPrompt } from './memory.ts';
 import { RemoteRunner } from './runner/remote.ts';
 import type { Runner, RunnerSession } from './runner/runner.ts';
@@ -132,6 +134,8 @@ export class Orchestrator {
   /** Agent terminal output, for the server to relay to viewers. */
   readonly terminals = new EventEmitter<{ data: [ID, string] }>();
   private readonly mailbox: Mailbox;
+  /** Player-to-player e-mail (see player-mail.ts). */
+  private readonly playerMail: PlayerMailbox;
   /** Repo agents walking between the balcony and a hot desk. */
   private readonly walks = new Map<ID, NodeJS.Timeout>();
   /** Events for a single player (e.g. their account login terminal), for the server to deliver. */
@@ -150,6 +154,7 @@ export class Orchestrator {
     this.config = config;
     this.terminal = terminal;
     this.mailbox = new Mailbox(db);
+    this.playerMail = new PlayerMailbox(db, () => this.store.all('user'), (userId, event) => this.userEvents.emit('event', userId, event));
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -310,6 +315,7 @@ export class Orchestrator {
       users: this.store.all('user'),
       accounts: this.store.all('account'),
       mail: actor.kind === 'user' ? this.mailbox.inbox(you.id) : [],
+      playerMail: { unread: actor.kind === 'user' ? this.playerMail.unread(you.id) : 0 },
       buildings: this.store.all('building'),
       floors: this.store.all('floor'),
       projects: this.store.all('project'),
@@ -329,6 +335,10 @@ export class Orchestrator {
   // ------------------------------------------------------------------ commands
 
   async handle<K extends CommandName>(command: K, args: Commands[K]['args'], actor: Actor): Promise<Commands[K]['result']> {
+    if (isPlayerMailCommand(command)) {
+      if (actor.kind !== 'user') throw new Error('Only players have mail');
+      return this.playerMail.handle(command, args as never, actor.user) as Commands[K]['result'];
+    }
     const handler = (this.handlers as Record<string, (a: unknown, u: User, actor: Actor) => unknown>)[command];
     if (!handler) throw new Error(`Unknown command: ${command}`);
     let user: User;
@@ -577,9 +587,9 @@ export class Orchestrator {
     return this.store.require('agent', agentId);
   }
 
-  /** Host commands (offices, economy) are handled by OfficeHost, whiteboards by Whiteboards (both routed by the server), not here. */
+  /** Host commands (offices, economy) are handled by OfficeHost, whiteboards by Whiteboards (both routed by the server), player mail by PlayerMailbox (see handle), not here. */
   private readonly handlers: {
-    [K in Exclude<CommandName, HostCommandName | WhiteboardCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
+    [K in Exclude<CommandName, HostCommandName | WhiteboardCommandName | PlayerMailCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
   } = {
     // ---- world
     create_building: ({ name, kind, color }) => {

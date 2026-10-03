@@ -1,0 +1,25 @@
+/* A character's "photo" (Portrait.tsx): a disc in their color, initials until the render is ready. */
+.portrait {
+  display: inline-grid; place-items: center; flex: none; overflow: hidden; border-radius: 50%;
+  position: relative; user-select: none;
+  background: var(--portrait-color, var(--accent));
+  color: #fff; font-weight: 700; line-height: 1; letter-spacing: 0.02em;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 0.25);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+.portrait.ready {
+  background:
+    radial-gradient(circle at 50% 30%, rgb(255 255 255 / 0.55), transparent 70%),
+    color-mix(in srgb, var(--portrait-color, var(--accent)) 38%, #eef1f5);
+}
+.portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.portrait.gone { background: var(--surface-3); color: var(--muted); text-shadow: none; font-size: 13px; }
+
+@media (prefers-color-scheme: dark) {
+  .portrait.ready {
+    background:
+      radial-gradient(circle at 50% 30%, rgb(255 255 255 / 0.22), transparent 70%),
+      color-mix(in srgb, var(--portrait-color, var(--accent)) 45%, #2a2f39);
+  }
+  .portrait { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08); }
+}

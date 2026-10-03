@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { ID, Snapshot } from '@agent-hq/protocol';
 import { COORDINATOR, level, STATUS_ICON, STATUS_LABEL } from '../agentUtil.ts';
 import { client, run } from '../api.ts';
+import { mailUnread } from './MailClient.tsx';
 import { AccountBadge, AccountsModal, AccountSwitcher, runsFor, TakeOverButton } from './Accounts.tsx';
 
 /**
@@ -20,6 +21,8 @@ export function AgentTerminal(props: {
   onDetails: () => void;
   /** The agent runs headless on its machine: fall back to the chat panel. */
   onChatOnly: () => void;
+  /** Your mail, from this computer. */
+  onMail: () => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const [canType, setCanType] = useState(false);
@@ -116,6 +119,7 @@ export function AgentTerminal(props: {
           {agent.status === 'working' && canType && <button className="small ghost" onClick={() => key('\x1b')}>■ Interrupt</button>}
           {runsFor(props.world, agent) === props.world.you.id && <button className="small" onClick={props.onNewTask}>＋ Task</button>}
           <button className="small ghost" onClick={props.onDetails}>History & settings</button>
+          <button className="small ghost" onClick={props.onMail} title="Your mail, from this computer">📧 Mail{mailUnread(props.world) ? <span className="mail-badge">{mailUnread(props.world)}</span> : null}</button>
         </header>
         {error && <div className="monitor-error">{error}</div>}
         {!canType && !error && (
