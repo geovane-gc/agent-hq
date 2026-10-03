@@ -50,6 +50,7 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `machine-accounts.ts` | The host owner's Claude accounts are machine-wide: records in `<data>/claude-accounts.json`, config dirs in `<data>/claude-accounts`, shown in every office. Teammates' accounts stay in the office database |
 | `economy.ts`, `economy-config.ts` | The ledger: revenue for verified merged work (once per task), token costs as expenses, hiring fees and career-mode gating. Every balance number lives in `economy-config.ts` |
 | `whiteboards.ts` | Drawing boards (Excalidraw): per-office tables, element reconciliation, relaying changes and cursors to a board's viewers, debounced saves, pasted images and thumbnails. Its commands are routed by the server |
+| `folder-picker.ts` | The system folder chooser for browser players: AppleScript `choose folder` on macOS, a WinForms `FolderBrowserDialog` through PowerShell on Windows, zenity or kdialog on Linux. Cancel resolves null; one dialog at a time; closed after 10 minutes |
 | `delivery.ts` | Git checks behind revenue: is a task branch merged into the default branch (merge, rebase or squash), and how many lines changed |
 
 ### apps/web
@@ -187,9 +188,27 @@ never interrupt a free conversation someone is watching. Tasks assigned to a bus
 - **Presence**: players walking in first person broadcast their position and render as walking avatars; players in the
   overview are shown parked (the boss at the executive desk, others by the elevator).
 
+## Folder picker
+
+"Browse…" next to a folder field asks for the chosen folder's absolute path, on the machine that runs your agents:
+
+- **Desktop app**: `apps/desktop/preload.cjs` exposes only `window.agentHQ.pickFolder(defaultPath)` (contextIsolation,
+  sandboxed). It invokes one IPC channel that `main.cjs` answers with Electron's `dialog.showOpenDialog`, and only for
+  pages from the office's own origin.
+- **Browser**: the `pick_folder` command. For the boss the host opens the dialog on its own screen, so it is refused
+  unless the connection comes from the host itself (loopback, no `X-Forwarded-For` / `Forwarded` / `X-Real-IP`). For a
+  manager it goes to their `join` runner (`pick_folder` runner op, answered with `runner_reply`) and opens on their
+  screen; without a runner it fails with a hint. Projects are added by the boss only, so today no manager screen uses
+  it; it is there for runner-side paths.
+
+In every case the text field stays editable, and errors (no dialog tool, no desktop session, timeout, a dialog already
+open) are shown under it.
+
 ## Known limits
 
 - The WebSocket endpoint has no TLS of its own. Use a tunnel or reverse proxy with HTTPS for anything beyond a
   trusted LAN.
 - Remote runners need a reachable git `origin` (or a `--repo` mapping) for each project they work on.
 - If the host process is killed abruptly (not closed), agent Claude Code processes can outlive it.
+- An SSH port forward to the host looks local, so the browser folder dialog would open on the host's screen. Tunnels
+  and proxies that add forwarding headers are refused.

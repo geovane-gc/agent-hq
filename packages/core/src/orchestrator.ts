@@ -40,7 +40,8 @@ import type { BossTerminal } from './terminal.ts';
 
 /** Who is issuing a command: a player, or an agent through the HQ MCP tools. */
 export type Actor =
-  | { kind: 'user'; user: User }
+  /** `local`: connected from the host machine itself (see server.ts), so the host's screen is in front of them. */
+  | { kind: 'user'; user: User; local?: boolean }
   | { kind: 'agent'; agentId: ID; manager: boolean };
 
 interface LiveSession {
@@ -666,6 +667,17 @@ export class Orchestrator {
     get_github_status: async () => {
       const { configured, source, login } = await githubStatus(this.githubToken());
       return { configured, source, login };
+    },
+
+    pick_folder: async ({ defaultPath }, user, actor) => {
+      // The dialog opens on the screen of the machine running your agents.
+      if (user.id === this.owner().id && !(actor.kind === 'user' && actor.local)) {
+        throw new Error('The folder dialog opens on the host computer\'s screen, so it only works from a browser on that computer. Type the folder path instead.');
+      }
+      const runner = this.runnerOf(user.id);
+      if (!runner) throw new Error('Your machine is not connected: start your runner (Team → Run your agents) to browse its folders, or type the path.');
+      const start = typeof defaultPath === 'string' && defaultPath.trim() ? defaultPath.trim() : null;
+      return { path: await runner.pickFolder(start) };
     },
 
     remove_project: async ({ id }) => {

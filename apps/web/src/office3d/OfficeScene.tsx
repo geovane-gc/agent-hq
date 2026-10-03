@@ -99,6 +99,8 @@ export function OfficeScene(props: {
   onTerminal: (() => void) | null;
   /** Click on a repo agent on the balcony. */
   onSummon: (agentId: ID) => void;
+  /** Click on the balcony while it has no agents. */
+  onEmptyBalcony: () => void;
 }) {
   const { world, floor } = props;
   const plan = useMemo(() => floorPlan(floor.desks), [floor.desks]);
@@ -107,9 +109,9 @@ export function OfficeScene(props: {
   const easel = useMemo(() => easelPlacement(plan), [plan]);
   const solid = useMemo(() => [...colliders(plan, floor.theme), whiteboardCollider(easel.position, easel.rotation)], [plan, floor.theme, easel]);
   const agents = world.agents.filter((a) => a.floorId === floor.id && a.kind !== 'repo').sort((a, b) => a.createdAt - b.createdAt);
-  // Repo agents (.claude/agents of this floor's projects) live on the balcony.
+  // Repo agents (.claude/agents of this floor's projects) live on the balcony. Every floor has one, crew or not.
   const crew = world.agents.filter((a) => a.floorId === floor.id && a.kind === 'repo').sort((a, b) => a.createdAt - b.createdAt);
-  const balcony = useMemo(() => (crew.length ? balconyLayout(plan, crew.length) : null), [plan, crew.length]);
+  const balcony = useMemo(() => balconyLayout(plan, crew.length), [plan, crew.length]);
   const projectIds = new Set(world.projects.filter((p) => p.floorId === floor.id).map((p) => p.id));
   const tasks = world.tasks.filter((t) => projectIds.has(t.projectId));
   const canRecruit = world.agents.length < world.settings.maxAgents;
@@ -120,7 +122,7 @@ export function OfficeScene(props: {
   const span = Math.max(plan.maxX - plan.minX, plan.maxZ - plan.minZ);
   // Frame the balcony too in the overview.
   const view = useMemo(() => {
-    const extra = balcony ? balcony.maxZ - plan.maxZ : 0;
+    const extra = balcony.maxZ - plan.maxZ;
     const center: Vec3 = [plan.center[0], 0, plan.center[2] + extra / 2];
     return { plan: { ...plan, center }, span: Math.max(plan.maxX - plan.minX, plan.maxZ - plan.minZ + extra) };
   }, [plan, balcony]);
@@ -128,7 +130,7 @@ export function OfficeScene(props: {
   const focus = useMemo(() => {
     const index = agents.findIndex((a) => a.id === props.focusAgentId);
     const hotDesk = crew.find((a) => a.id === props.focusAgentId)?.repo?.deskIndex;
-    const slot = index >= 0 ? plan.slots[index] : hotDesk != null ? balcony?.desks[hotDesk] : undefined;
+    const slot = index >= 0 ? plan.slots[index] : hotDesk != null ? balcony.desks[hotDesk] : undefined;
     if (!slot) return null;
     return {
       eye: new THREE.Vector3(...toWorld(slot.position, slot.rotation, MONITOR_EYE)),
@@ -192,18 +194,17 @@ export function OfficeScene(props: {
             balcony={balcony}
           />
           <WhiteboardStand position={easel.position} rotation={easel.rotation} spot={floorSpot(floor.id)} newBoardName={`${floor.name} whiteboard`} />
-          {balcony && (
-            <Balcony
-              layout={balcony}
-              crew={crew}
-              tasks={world.tasks}
-              accent={floor.theme.accentColor}
-              focusAgentId={props.focusAgentId}
-              gamification={world.settings.gamification}
-              onSummon={props.onSummon}
-              onOpenAgent={props.onOpenAgent}
-            />
-          )}
+          <Balcony
+            layout={balcony}
+            crew={crew}
+            tasks={world.tasks}
+            accent={floor.theme.accentColor}
+            focusAgentId={props.focusAgentId}
+            gamification={world.settings.gamification}
+            onSummon={props.onSummon}
+            onOpenAgent={props.onOpenAgent}
+            onEmpty={props.onEmptyBalcony}
+          />
           {plan.slots.map((slot) => {
             const agent = agents[slot.index] ?? null;
             return (

@@ -12,7 +12,7 @@ import { Modal } from './components/Modal.tsx';
 import { SettingsModal } from './components/Settings.tsx';
 import { openFinances } from './components/Finance.tsx';
 import { StartScreen, TycoonLayer, openStartScreen } from './components/StartScreen.tsx';
-import { SummonModal } from './components/SummonModal.tsx';
+import { EmptyBalconyModal, SummonModal } from './components/SummonModal.tsx';
 import { UsageModal } from './components/Usage.tsx';
 import { WhiteboardLayer } from './components/Whiteboards.tsx';
 import { openWhiteboards } from './whiteboards.ts';
@@ -31,6 +31,7 @@ type Overlay =
   | { kind: 'board' }
   | { kind: 'computer'; mailId?: ID; tab?: 'inbox' | 'terminal' }
   | { kind: 'summon'; agentId: ID }
+  | { kind: 'balcony' }
   | { kind: 'usage' }
   | { kind: 'settings'; tab?: 'general' | 'integrations' | 'team' }
   | null;
@@ -184,6 +185,7 @@ export function App() {
           onElevator={nextFloor}
           onTerminal={() => setOverlay({ kind: 'computer' })}
           onSummon={(agentId) => setOverlay({ kind: 'summon', agentId })}
+          onEmptyBalcony={() => setOverlay({ kind: 'balcony' })}
         />
       ) : (
         <div className="splash"><p className="muted">No floors yet.</p></div>
@@ -281,6 +283,9 @@ export function App() {
       {overlay?.kind === 'floor' && floor && <FloorModal floor={floor} world={world} onClose={close} />}
       {overlay?.kind === 'computer' && <BossComputer world={world} initialMailId={overlay.mailId} initialTab={overlay.tab} onClose={close} onOpenAgent={openAgent} />}
       {overlay?.kind === 'summon' && <SummonModal world={world} agentId={overlay.agentId} onClose={close} onOpenAgent={openAgent} />}
+      {overlay?.kind === 'balcony' && floor && (
+        <EmptyBalconyModal world={world} floorId={floor.id} onClose={close} onAddProject={owner ? () => setOverlay({ kind: 'project' }) : null} />
+      )}
       {overlay?.kind === 'usage' && <UsageModal onClose={close} />}
       {overlay?.kind === 'settings' && <SettingsModal world={world} initial={overlay.tab} onClose={close} />}
       <TycoonLayer world={world} />

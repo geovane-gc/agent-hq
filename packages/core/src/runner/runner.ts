@@ -33,4 +33,6 @@ export interface Runner {
   accountRemove(configDir: string, email: string | null): Promise<AccountRemoval>;
   /** Commits the task's uncommitted work and pushes its branch, before someone else takes it over. */
   handoff(project: Project, task: Task): Promise<HandoffResult>;
+  /** The system's folder chooser on this machine: the chosen path, or null when cancelled. */
+  pickFolder(defaultPath: string | null): Promise<string | null>;
 }

@@ -419,6 +419,13 @@ export interface Commands extends HostCommands, WhiteboardCommands {
   set_github_token: { args: { token: string | null }; result: { configured: boolean } };
   get_github_status: { args: Record<string, never>; result: { configured: boolean; source: 'gh' | 'env' | 'settings' | null; login: string | null } };
   remove_project: { args: { id: ID }; result: null };
+  /**
+   * Opens the system's folder chooser on the machine that runs your agents
+   * (the host for the boss, only from a browser on the host itself; your
+   * `join` runner for a teammate) and returns the chosen absolute path, or
+   * null when cancelled. The desktop app uses its own dialog instead.
+   */
+  pick_folder: { args: { defaultPath?: string | null }; result: { path: string | null } };
   hire_agent: {
     args: {
       name: string;
@@ -570,7 +577,9 @@ export type RunnerOp =
    */
   | { op: 'account_remove'; requestKey: string; configDir: string; email: string | null }
   /** Before a takeover: commit WIP on the task branch and push it if there is an origin; answered with runner_reply. */
-  | { op: 'handoff'; requestKey: string; project: Project; task: Task };
+  | { op: 'handoff'; requestKey: string; project: Project; task: Task }
+  /** Shows the system's folder chooser on the runner's machine; answered with runner_reply (the path, or null when cancelled). */
+  | { op: 'pick_folder'; requestKey: string; defaultPath: string | null };
 
 export type RunnerSessionEvent =
   | { type: 'session'; sessionId: string; interactive: boolean }

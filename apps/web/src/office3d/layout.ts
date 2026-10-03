@@ -126,6 +126,8 @@ export interface Balcony extends Rect {
   desks: Slot[];
   /** Where idle repo agents stand smoking, looking out over the railing. */
   spots: Array<{ position: Vec3; rotation: number }>;
+  /** With no crew yet: empty benches, each with an ashtray at its right end, looking out over the railing. */
+  benches: Vec3[];
 }
 
 const HOT_DESK_SPACING = 1.8;
@@ -136,14 +138,20 @@ const SMOKER_SPACING = 1.05;
  * The balcony outside the front wall, home of the repo agents: one hot desk
  * per crew member along the glass (from the left), and a smoking corner. A
  * small crew smokes right next to the desks; a bigger one gets rows of desks
- * and the whole railing to smoke at.
+ * and the whole railing to smoke at. Every floor has one; until its projects
+ * define agents it only has empty benches.
  */
 export function balconyLayout(plan: FloorPlan, crew: number): Balcony {
   // The server hands out desk indexes below the crew size, so `crew` desks always suffice.
-  const n = Math.max(1, crew);
+  const n = crew;
   const minX = plan.boss.maxX + 1;
   const maxX = plan.maxX - 1;
   const width = maxX - minX;
+  if (!crew) {
+    const count = Math.max(1, Math.min(3, Math.floor(width / 5)));
+    const benches = Array.from({ length: count }, (_, i): Vec3 => [minX + (width * (i + 0.5)) / count - 0.3, 0, plan.maxZ + 1.35]);
+    return { minX, maxX, minZ: plan.maxZ, maxZ: plan.maxZ + 2.5, desks: [], spots: [], benches };
+  }
   const perRow = Math.max(1, Math.floor(width / HOT_DESK_SPACING));
   const rows = Math.ceil(n / perRow);
   const desks: Slot[] = [];
@@ -155,7 +163,7 @@ export function balconyLayout(plan: FloorPlan, crew: number): Balcony {
   if (n * (HOT_DESK_SPACING + SMOKER_SPACING) + 0.6 <= width) {
     const x0 = minX + n * HOT_DESK_SPACING + 0.9;
     const spots = Array.from({ length: crew }, (_, i) => ({ position: [x0 + i * SMOKER_SPACING, 0, plan.maxZ + 1.45 + (i % 2) * 0.3] as Vec3, rotation: turn(i) }));
-    return { minX, maxX, minZ: plan.maxZ, maxZ: plan.maxZ + 2.5, desks, spots };
+    return { minX, maxX, minZ: plan.maxZ, maxZ: plan.maxZ + 2.5, desks, spots, benches: [] };
   }
   const smokeZ = plan.maxZ + 1.2 + (rows - 1) * HOT_DESK_ROW + 1.35;
   const perLine = Math.max(1, Math.floor(width / SMOKER_SPACING));
@@ -164,7 +172,7 @@ export function balconyLayout(plan: FloorPlan, crew: number): Balcony {
     position: [minX + 0.6 + (i % perLine) * SMOKER_SPACING + (Math.floor(i / perLine) % 2) * 0.5, 0, smokeZ - Math.floor(i / perLine) * 0.75] as Vec3,
     rotation: turn(i),
   }));
-  return { minX, maxX, minZ: plan.maxZ, maxZ: smokeZ + 0.65, desks, spots };
+  return { minX, maxX, minZ: plan.maxZ, maxZ: smokeZ + 0.65, desks, spots, benches: [] };
 }
 
 const box = (cx: number, cz: number, hx: number, hz: number): Rect => ({ minX: cx - hx, maxX: cx + hx, minZ: cz - hz, maxZ: cz + hz });

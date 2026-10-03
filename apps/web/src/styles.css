@@ -331,6 +331,12 @@ button.tag { cursor: pointer; }
 .form-actions button { min-width: 96px; padding: 8px 16px; }
 .input-with-btn { display: flex; gap: 6px; align-items: center; }
 .input-with-btn .icon-btn { width: 34px; height: 34px; font-size: 17px; border: 1px solid var(--border); }
+.input-with-btn input { min-width: 0; }
+.input-with-btn button.browse { flex: none; white-space: nowrap; font-weight: 500; }
+.folder-note { font-weight: 400; }
+/* A checkbox next to an input in a two-column row lines up with the input, not its label. */
+.form .grid2 > label.check { align-self: end; min-height: 35px; align-items: center; }
+.form .grid2 > label.check input { margin-top: 0; }
 details.advanced { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 details.advanced > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 details.advanced[open] { display: flex; flex-direction: column; gap: 12px; }
@@ -445,6 +451,10 @@ table.usage tbody tr:last-child > * { border-bottom: 0; }
 .tabs.inline button { background: transparent; color: var(--text-2); border-radius: 999px; padding: 6px 14px; }
 .tabs.inline button:hover:not(.active) { background: var(--surface-3); filter: none; }
 .tabs.inline button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); }
+/* A two-way choice inside a form: fills the row in equal halves, stacks on phones. */
+.tabs.inline.segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border-radius: var(--radius); margin-bottom: 0; }
+.tabs.inline.segmented button { border-radius: 9px; padding: 7px 10px; line-height: 1.25; }
+@media (max-width: 480px) { .tabs.inline.segmented { grid-auto-flow: row; } }
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .settings-grid .span2 { grid-column: 1 / -1; }
 .field { display: flex; flex-direction: column; gap: 6px; }
@@ -519,6 +529,9 @@ input[role='switch']:checked::after { transform: translateX(16px); }
 /* ---------- balcony crew (repo agents), boss computer inbox, GitHub projects */
 .tag.repo-agent { border-color: #9b7a58; background: #fffaf3; }
 .tag.repo-agent.busy { border-style: dashed; }
+.tag.sign.balcony-empty { border-style: dashed; border-color: #9b7a58; font: inherit; font-size: 12px; font-weight: 600; }
+.tag.sign.balcony-empty small { font-weight: 400; color: #5c6470; }
+.balcony-howto pre { margin: 0; }
 .mail-badge { margin-left: 6px; background: var(--error); color: #fff; border-radius: 999px; padding: 0 6px; font-size: 11px; }
 .inbox { display: grid; grid-template-columns: minmax(230px, 300px) 1fr; gap: 16px; height: min(64vh, 620px); }
 .mail-list { list-style: none; margin: 0; padding: 0 10px 0 0; overflow: auto; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }

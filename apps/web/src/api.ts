@@ -223,3 +223,19 @@ export async function run<K extends CommandName>(command: K, args: Commands[K]['
     throw err;
   }
 }
+
+declare global {
+  interface Window {
+    /** The desktop app's bridge (apps/desktop/preload.cjs); absent in a browser. */
+    agentHQ?: { pickFolder(defaultPath?: string | null): Promise<string | null> };
+  }
+}
+
+/**
+ * The system's folder chooser: the desktop app's own dialog or, in a browser,
+ * one the host (or your runner) opens on its screen. Resolves null when cancelled.
+ */
+export async function pickFolder(defaultPath?: string): Promise<string | null> {
+  if (window.agentHQ?.pickFolder) return window.agentHQ.pickFolder(defaultPath || null);
+  return (await client.request('pick_folder', { defaultPath: defaultPath || null })).path;
+}
