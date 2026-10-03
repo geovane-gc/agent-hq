@@ -1,6 +1,19 @@
+<div align="center">
+
 # 🏢 Agent HQ
 
 **A 3D virtual office where AI agents are your employees.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node.js >= 22.18](https://img.shields.io/badge/node-%E2%89%A5%2022.18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![Platform: Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#requirements)
+[![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-D97757?logo=claude&logoColor=white)](https://claude.com/claude-code)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+[Features](#features) · [Screenshots](#screenshots) · [Quick start](#quick-start) · [How to play](#how-to-play) ·
+[Multiplayer](#multiplayer) · [Architecture](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)
+
+</div>
 
 Instead of juggling terminals, you run a company. Build a campus of studios, hire AI developers, hand out tasks on a
 whiteboard and walk up to anyone's desk to see exactly what they're doing. Every employee is a real
@@ -174,6 +187,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together
 - Agent HQ never handles Claude credentials. Each player's agents use that player's own Claude Code login.
 - Folder trust: Claude Code asks whether to trust new folders. Agent HQ answers "yes" only for the worktrees and scratch
   folders it creates from repositories you added.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get set up, and note that
+this project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

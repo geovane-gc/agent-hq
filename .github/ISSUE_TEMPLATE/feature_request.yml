@@ -1,0 +1,61 @@
+name: Feature request
+description: Suggest an idea or improvement for Agent HQ
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! If it's still a loose thought, you can also start a thread in [Discussions](https://github.com/geovane-gc/agent-hq/discussions).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe what you're trying to do and what gets in the way today.
+      placeholder: When several agents need approval at once, I have to walk to each desk to see what they're asking.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work? Mockups and sketches are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - 3D office / campus / cameras
+        - Agent terminal (Claude Code session)
+        - Agent status / hooks
+        - Task board / auto-dispatch / worktrees
+        - Managers / HQ MCP tools
+        - Integrations (MCP servers)
+        - Usage report / HUD meters
+        - Boss terminal
+        - Multiplayer / invites / runners
+        - Desktop app (Electron)
+        - Customization / 3D models
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd be willing to open a pull request for this
+          required: false
