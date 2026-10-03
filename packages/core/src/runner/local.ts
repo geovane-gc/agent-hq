@@ -1,11 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ID, Project, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
-import { accountStatus, ensureSessionInConfigDir, removeAccountDir, resolveConfigDir, startAccountLogin, type AccountStatus } from '../accounts.ts';
+import {
+  accountStatus, ensureSessionInConfigDir, removeAccount, resolveConfigDir, startAccountLogin, type AccountRemoval, type AccountStatus,
+} from '../accounts.ts';
 import type { AgentAdapter, AgentSession, PermissionDecision } from '../adapters/adapter.ts';
 import { addWorktree, handoffBranch, removeWorktree, syncBranchFromOrigin, type HandoffResult } from '../git.ts';
 import { platformMcpConfig } from '../integrations.ts';
-import { agentWorkspace, buildSystemPrompt, memoryFile } from '../memory.ts';
+import { agentWorkspace, buildSystemPrompt, memoryFile, repoAgentSystemPrompt } from '../memory.ts';
+import { scanRepoAgents, type RepoAgentDef } from '../repo-agents.ts';
 import { HookServer } from './hook-server.ts';
 import type { Runner, RunnerSession } from './runner.ts';
 
@@ -69,7 +72,9 @@ export class LocalRunner implements Runner {
       if (project) {
         const ws = await this.resolveRepo(project);
         cwd = ws.repoPath;
-        if (task && ws.git && !(task.worktreePath && existsSync(task.worktreePath))) {
+        // Read-only repo agents work in the checkout itself; everyone else gets a worktree per task.
+        const isolate = !agent.repo?.readOnly;
+        if (task && ws.git && isolate && !(task.worktreePath && existsSync(task.worktreePath))) {
           // The branch may have been started on another machine (a takeover, or a
           // teammate's runner): bring it from origin first.
           if (task.branch) await syncBranchFromOrigin(ws.repoPath, task.branch);
@@ -96,22 +101,27 @@ export class LocalRunner implements Runner {
         resumeSessionId = null;
       }
 
-      const memoryPath = memoryFile(this.dataDir, agent, project);
       const hqArgs = [HQ_MCP, '--url', this.hqUrl, '--token', start.hq.token, ...(start.hq.manager ? ['--manager'] : [])];
       const hookUrl = await this.hookServer.url();
+      // Repo agents bring their own definition (prompt, tools, model): no notes, board tools or integrations.
+      const repoAgent = start.repoAgentName && project ? start.repoAgentName : null;
+      const memoryPath = repoAgent ? null : memoryFile(this.dataDir, agent, project);
       session = adapter.start(
         {
           cwd,
           model: agent.model,
           permissionMode: agent.permissionMode,
-          systemPrompt: buildSystemPrompt({ agent, project, task, memoryPath, remote: this.remote }),
+          systemPrompt: memoryPath
+            ? buildSystemPrompt({ agent, project, task, memoryPath, remote: this.remote })
+            : repoAgentSystemPrompt({ agent, project: project!, task, remote: this.remote }),
           resumeSessionId,
           configDir,
-          addDirs: [path.dirname(memoryPath)],
-          mcpServers: {
+          addDirs: memoryPath ? [path.dirname(memoryPath)] : [],
+          mcpServers: repoAgent ? {} : {
             'agent-hq': { type: 'stdio', command: process.execPath, args: ['--no-warnings', ...hqArgs] },
             ...Object.fromEntries(Object.entries(start.mcpServers).map(([k, v]) => [k, platformMcpConfig(v as Record<string, unknown>)])),
           },
+          agentName: repoAgent,
           initialPrompt: start.prompt,
           hooks: { url: hookUrl, register: (handler) => this.hookServer.register(handler) },
         },
@@ -139,6 +149,11 @@ export class LocalRunner implements Runner {
     };
   }
 
+  async scanAgents(project: Project): Promise<RepoAgentDef[]> {
+    const ws = await this.resolveRepo(project);
+    return scanRepoAgents(ws.repoPath);
+  }
+
   async cleanup(project: Project, task: Task): Promise<boolean> {
     if (!task.worktreePath || !existsSync(task.worktreePath)) return true;
     const ws = await this.resolveRepo(project).catch(() => null);
@@ -155,8 +170,8 @@ export class LocalRunner implements Runner {
     return startAccountLogin(this.dataDir, configDir, onEvent);
   }
 
-  async accountRemove(configDir: string): Promise<void> {
-    removeAccountDir(this.dataDir, configDir);
+  accountRemove(configDir: string, email: string | null): Promise<AccountRemoval> {
+    return removeAccount(this.dataDir, configDir, email);
   }
 
   async handoff(project: Project, task: Task): Promise<HandoffResult> {

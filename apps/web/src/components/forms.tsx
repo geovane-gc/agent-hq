@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import type { Agent, Appearance, Building, BuildingKind, Floor, FloorMaterial, ID, PermissionMode, Snapshot } from '@agent-hq/protocol';
+import { useEffect, useState } from 'react';
+import type { Agent, Appearance, Building, BuildingKind, Commands, Floor, FloorMaterial, ID, PermissionMode, Snapshot } from '@agent-hq/protocol';
 import { COORDINATOR, MODELS } from '../agentUtil.ts';
 import { client } from '../api.ts';
 import { randomAgentName } from '../names.ts';
+import { assignBlocked } from './Accounts.tsx';
 import { FormModal } from './Modal.tsx';
 
 const str = (d: FormData, k: string) => String(d.get(k) ?? '').trim();
@@ -144,24 +145,88 @@ export function AgentModal(props: { world: Snapshot; floorId: ID; agent?: Agent;
   );
 }
 
+type GithubStatus = Commands['get_github_status']['result'];
+
+/** Where gh gets its GitHub login, with a way to save a token when it has none. */
+function GithubAccount() {
+  const [status, setStatus] = useState<GithubStatus | null>(null);
+  const [token, setToken] = useState('');
+  const refresh = () => client.request('get_github_status', {}).then(setStatus, () => {});
+  useEffect(() => { refresh(); }, []);
+  if (!status) return <p className="hint">Checking your GitHub login…</p>;
+  if (status.configured) {
+    const via = { gh: 'the GitHub CLI', env: 'GITHUB_TOKEN', settings: 'the saved token' }[status.source ?? 'gh'];
+    return <p className="hint">✓ GitHub: {status.login ? <>signed in as <strong>{status.login}</strong></> : 'token set'} (via {via}).</p>;
+  }
+  return (
+    <div className="callout github-login">
+      <span>
+        GitHub isn't connected. Install the <a href="https://cli.github.com" target="_blank" rel="noreferrer">GitHub CLI</a> and
+        run <code>gh auth login</code> (the boss terminal works), or paste a token with the <code>repo</code> scope:
+      </span>
+      <div className="row">
+        <input type="password" value={token} placeholder="ghp_… or github_pat_…" onChange={(e) => setToken(e.target.value)} />
+        <button
+          type="button"
+          className="small"
+          disabled={!token.trim()}
+          onClick={() => client.request('set_github_token', { token }).then(() => { setToken(''); refresh(); }, (e) => window.dispatchEvent(new CustomEvent('hq-error', { detail: e.message })))}
+        >
+          Save
+        </button>
+        <button type="button" className="small ghost" onClick={refresh}>Check again</button>
+      </div>
+    </div>
+  );
+}
+
+/** Every project is a GitHub repository: an existing clone, or a new repository created from here. */
 export function NewProjectModal(props: { floorId: ID; note?: string; onClose: () => void }) {
+  const [mode, setMode] = useState<'link' | 'create'>('link');
+  const [name, setName] = useState('');
+  const [repoName, setRepoName] = useState<string | null>(null);
+  const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
   return (
     <FormModal
       title="New project"
-      submitLabel="Create"
+      subtitle="Every project is a GitHub repository"
+      submitLabel={mode === 'create' ? 'Create repository & project' : 'Add project'}
       onClose={props.onClose}
       onSubmit={(d) => client.request('create_project', {
         name: str(d, 'name'),
         repoPath: str(d, 'repoPath'),
         floorId: props.floorId,
-        initGit: d.get('initGit') === 'on',
+        createGithubRepo: mode === 'create' ? { name: str(d, 'repoName'), private: d.get('private') === 'on' } : null,
       })}
     >
       {props.note && <p className="callout">{props.note}</p>}
-      <label>Name<input name="name" required autoFocus /></label>
-      <label>Repository path<input name="repoPath" required placeholder="C:\dev\my-app or ~/dev/my-app" /></label>
-      <label className="check"><input type="checkbox" name="initGit" /> Create the folder / initialize git if needed</label>
-      <p className="hint">Git projects give each agent its own worktree and branch, so teammates never collide.</p>
+      <div className="tabs inline">
+        <button type="button" className={mode === 'link' ? 'active' : ''} onClick={() => setMode('link')}>Link a GitHub clone</button>
+        <button type="button" className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>Create a new GitHub repository</button>
+      </div>
+      <label>Name<input name="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} /></label>
+      {mode === 'link' ? (
+        <>
+          <label>Local folder<input name="repoPath" required placeholder="C:\dev\my-app or ~/dev/my-app" /></label>
+          <p className="hint">The root of a git repository whose <code>origin</code> is on GitHub, for example a clone of it.</p>
+        </>
+      ) : (
+        <>
+          <label>Local folder<input name="repoPath" required placeholder="~/dev/my-app (created if it doesn't exist)" /></label>
+          <div className="grid2">
+            <label>Repository name
+              <input name="repoName" required value={repoName ?? slug(name)} onChange={(e) => setRepoName(e.target.value)} placeholder="my-app or my-org/my-app" />
+            </label>
+            <label className="check"><input type="checkbox" name="private" defaultChecked /> Private</label>
+          </div>
+          <p className="hint">
+            Agent HQ initializes git in the folder if needed, creates the repository with <code>gh repo create</code>, makes it
+            the <code>origin</code> and pushes.
+          </p>
+          <GithubAccount />
+        </>
+      )}
+      <p className="hint">Agents defined in the repository's <code>.claude/agents</code> show up on the balcony, ready to be summoned.</p>
     </FormModal>
   );
 }
@@ -190,7 +255,14 @@ export function NewTaskModal(props: { world: Snapshot; projectIds: ID[]; assigne
       <label>Assignee
         <select name="assigneeId" defaultValue={props.assigneeId ?? ''}>
           <option value="">{props.world.settings.dispatchMode === 'auto' ? 'Anyone free on the floor (auto)' : 'Unassigned'}</option>
-          {props.world.agents.map((a) => <option key={a.id} value={a.id}>{a.name} — {a.role}{a.isManager ? ` (${COORDINATOR.label.toLowerCase()})` : ''}</option>)}
+          {props.world.agents.filter((a) => a.kind !== 'repo').map((a) => {
+            const why = assignBlocked(props.world, a);
+            return (
+              <option key={a.id} value={a.id} disabled={!!why} title={why ?? undefined}>
+                {a.name} — {a.role}{a.isManager ? ` (${COORDINATOR.label.toLowerCase()})` : ''}{why ? ' · other player\'s account' : ''}
+              </option>
+            );
+          })}
         </select>
       </label>
     </FormModal>
@@ -258,7 +330,7 @@ export function FloorModal(props: { floor: Floor; world: Snapshot; onClose: () =
   const f = props.floor;
   const [theme, setTheme] = useState(f.theme);
   const [desks, setDesks] = useState(f.desks);
-  const seated = props.world.agents.filter((a) => a.floorId === f.id).length;
+  const seated = props.world.agents.filter((a) => a.floorId === f.id && a.kind !== 'repo').length;
   return (
     <FormModal
       title={`Customize ${f.name}`}

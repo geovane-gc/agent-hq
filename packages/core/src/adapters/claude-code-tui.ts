@@ -92,6 +92,7 @@ export class ClaudeCodeTuiSession implements AgentSession {
     if (opts.initialPrompt) args.push(opts.initialPrompt);
     args.push('--settings', JSON.stringify(settings), '--append-system-prompt', opts.systemPrompt, '--permission-mode', opts.permissionMode);
     if (opts.permissionMode === 'bypassPermissions') args.push('--allow-dangerously-skip-permissions');
+    if (opts.agentName) args.push('--agent', opts.agentName);
     if (opts.model) args.push('--model', opts.model);
     if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
     if (Object.keys(opts.mcpServers).length) args.push('--mcp-config', JSON.stringify({ mcpServers: opts.mcpServers }));
@@ -172,7 +173,8 @@ export class ClaudeCodeTuiSession implements AgentSession {
         return;
       case 'Stop': {
         this.busy = false;
-        const text = lastAssistantText(input.transcript_path);
+        // The transcript file may not have the final message yet; newer CLIs pass it in the payload.
+        const text = (typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()) || lastAssistantText(input.transcript_path);
         if (text) this.onEvent({ type: 'transcript', kind: 'text', text });
         // Give the statusline a moment to report the final cost of the turn.
         setTimeout(() => this.onEvent({ type: 'turn_end', ok: true, interrupted: false, error: null, usage: this.usageDelta() }), 300);

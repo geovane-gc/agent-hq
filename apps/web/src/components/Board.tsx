@@ -2,6 +2,7 @@ import type { ID, Snapshot, Task, TaskStatus } from '@agent-hq/protocol';
 import { STATUS_ICON, STATUS_LABEL } from '../agentUtil.ts';
 import { run } from '../api.ts';
 import { ago, stamp } from '../format.ts';
+import { assignBlocked } from './Accounts.tsx';
 
 const COLUMNS: Array<{ status: TaskStatus; label: string; empty: string }> = [
   { status: 'todo', label: 'To do', empty: 'Nothing queued. Add a task to give the team work.' },
@@ -40,7 +41,10 @@ function TaskCard(props: { task: Task; world: Snapshot; onOpenAgent: (id: ID) =>
             onChange={(e) => e.target.value && run('assign_task', { taskId: task.id, agentId: e.target.value }).catch(() => {})}
           >
             <option value="">{world.settings.dispatchMode === 'auto' ? 'Auto-assign' : 'Assign…'}</option>
-            {world.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {world.agents.filter((a) => a.kind !== 'repo').map((a) => {
+              const why = assignBlocked(world, a);
+              return <option key={a.id} value={a.id} disabled={!!why} title={why ?? undefined}>{a.name}{why ? ' (other account)' : ''}</option>;
+            })}
           </select>
         ) : (
           assignee && <span className="muted small-text">by {assignee.name}</span>

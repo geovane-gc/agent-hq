@@ -55,7 +55,12 @@ into their monitor so you can type straight into their terminal.
 - **Approvals or auto mode**: per agent, from "ask me before sensitive actions" to Claude Code's auto mode.
 - **Usage report**: tokens and API-equivalent cost per agent, project and day, plus your subscription's 5-hour and
   7-day meters in the HUD.
-- **Boss terminal**: a private shell on the computer in the boss room, visible only to the owner.
+- **The balcony crew**: the agents a repository defines in `.claude/agents` hang out on the office balcony, smoking.
+  Summon one with a job and it walks to a hot desk and runs `claude --agent <name>` (read-only agents work in the
+  repository itself, agents that edit get their own worktree and branch). When it's done it mails you a report and goes
+  back to the balcony. They can't be fired.
+- **Boss computer**: your inbox of reports (reply to keep the conversation going: the agent resumes the same Claude Code
+  session) and, for the owner, a private shell on the host.
 - **Optional integrations**: give individual agents MCP servers for browser testing (Playwright), GitHub, Figma,
   Blender or Unity, or add your own.
 
@@ -77,7 +82,8 @@ into their monitor so you can type straight into their terminal.
 
 - **Node.js 22.18 or newer**
 - **Claude Code**, installed and logged in (`claude` on your PATH)
-- **git** (recommended: enables isolated worktrees per task)
+- **git**, and projects hosted on **GitHub**; the [GitHub CLI](https://cli.github.com) (`gh auth login`) lets you create
+  new repositories from the game
 
 That's all. Blender, Unity, Figma and the other tools are only needed if you enable those integrations. Agent HQ never
 asks for or stores your Claude credentials: it drives the `claude` CLI you already installed, so usage counts against
@@ -110,7 +116,8 @@ The `?token=…` in the link makes you the office owner. Keep it private.
 ## How to play
 
 1. **Pick a floor.** From the campus, click a building's storey, or use the elevator and the directory in the office.
-2. **Add a project.** A project is a git repository on your machine (`+ Project`). Tasks always belong to a project.
+2. **Add a project.** A project is a GitHub repository (Menu → Add a project): a local clone whose `origin` is on
+   GitHub, or a new repository created from the game with `gh`. Tasks always belong to a project.
 3. **Recruit.** Click an empty desk. Choose a name, role, model, permission mode and look; tick *Coordinator* if this agent
    should plan and delegate; pick optional integrations.
 4. **Give work.** Open the board (the whiteboard, or the HUD button) and add tasks, or click an agent's computer and use
@@ -142,9 +149,10 @@ Overview: drag to rotate, right-drag or `W A S D` to pan, wheel to zoom.
 The building owner is the **boss**; everyone invited is a **manager**. Each agent runs on its owner's machine, on one of
 their Claude accounts (connect several in **Settings → Claude accounts**; each employee's monitor shows the account's
 email, plan and player, and lets its owner switch). Claude accounts are personal: only the player whose account runs an
-agent can type into its terminal or approve its actions. Everyone else can watch, or use **⇄ Take over** on the monitor
-to move the task, its branch (committed and pushed to `origin`) and a summary of the work so far onto their own machine
-and account.
+agent can type into its terminal, approve its actions or give it board tasks. Everyone else can watch, or use
+**⇄ Take over** on the monitor to move the task, its branch (committed and pushed to `origin`) and a summary of the work
+so far onto their own machine and account. By default the agent's owner must approve a takeover; the boss can make it
+free in Settings.
 
 ## Configuration
 

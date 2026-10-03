@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { HostToRunner, ID, Project, RunnerMessage, RunnerOp, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
-import type { AccountStatus } from '../accounts.ts';
+import type { AccountRemoval, AccountStatus } from '../accounts.ts';
 import type { HandoffResult } from '../git.ts';
+import type { RepoAgentDef } from '../repo-agents.ts';
 import type { Runner, RunnerSession } from './runner.ts';
 
 type Reply = Extract<RunnerMessage, { type: 'runner_reply' }>;
@@ -89,8 +90,13 @@ export class RemoteRunner implements Runner {
     return this.remoteSession(key);
   }
 
-  accountRemove(configDir: string): Promise<void> {
-    return this.request((requestKey) => ({ op: 'account_remove', requestKey, configDir }), 30000);
+  accountRemove(configDir: string, email: string | null): Promise<AccountRemoval> {
+    return this.request((requestKey) => ({ op: 'account_remove', requestKey, configDir, email }), 90000);
+  }
+
+  scanAgents(project: Project): Promise<RepoAgentDef[]> {
+    return this.request<RepoAgentDef[]>((requestKey) => ({ op: 'scan_agents', requestKey, project }), 30000)
+      .then((defs) => (Array.isArray(defs) ? defs : []));
   }
 
   handoff(project: Project, task: Task): Promise<HandoffResult> {

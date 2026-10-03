@@ -61,6 +61,27 @@ export function buildSystemPrompt(opts: {
   ].filter(Boolean).join('\n\n');
 }
 
+/**
+ * Appended to a repo agent's own definition (`claude --agent`): where it
+ * works and that its final message is the report mailed to whoever called it.
+ */
+export function repoAgentSystemPrompt(opts: { agent: Agent; project: Project; task: Task | null; remote: boolean }): string {
+  const { agent, project, task, remote } = opts;
+  let workspace: string;
+  if (task?.branch) {
+    const finish = remote ? 'When done, push the branch to origin so the team can review it.' : 'Do not push or merge unless asked.';
+    workspace = `You work in a dedicated git worktree on branch \`${task.branch}\`. Commit your changes on this branch with clear messages before you finish. ${finish}`;
+  } else {
+    workspace = 'You work directly in the project checkout, which teammates share. Do not modify files.';
+  }
+  return [
+    `You were called in to Agent HQ, a virtual office, to work on ${project.name} as the "${agent.repo?.agentName ?? agent.name}" agent defined in this repository.`,
+    workspace,
+    'Never change global or system configuration on this machine (for example `git config --global`).',
+    'Work autonomously. Your final message of each turn is delivered as an e-mail report to the person who called you, who may reply with follow-up requests: make it a complete, self-contained report (what you did or found, and anything they should review), written in Markdown.',
+  ].join('\n\n');
+}
+
 export function taskPrompt(task: Task): string {
   return `# Task: ${task.title}\n\n${task.description || '(no further description)'}`;
 }

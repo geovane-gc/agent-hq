@@ -66,6 +66,14 @@ function General({ world }: { world: Snapshot }) {
               onBlur={(e) => run('update_settings', { patch: { maxAgents: Number(e.target.value) } }).catch(() => {})}
             />
           </label>
+          <label className="toggle">
+            <input type="checkbox" role="switch" checked={world.settings.takeoverPolicy === 'approval'}
+              onChange={(e) => run('update_settings', { patch: { takeoverPolicy: e.target.checked ? 'approval' : 'free' } }).catch(() => {})} />
+            <span>
+              <strong>Takeovers need approval</strong>
+              <small>Taking over another player's agent waits for the OK of the player whose Claude account runs it.</small>
+            </span>
+          </label>
         </section>
       )}
     </div>

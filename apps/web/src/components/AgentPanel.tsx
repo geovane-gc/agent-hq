@@ -120,7 +120,8 @@ export function AgentPanel(props: { world: Snapshot; agentId: ID; onClose: () =>
   const running = agent.status === 'working' || agent.status === 'awaiting_approval';
   const mine = agent.ownerId === props.world.you.id;
   const owner = props.world.users.find((u) => u.id === agent.ownerId);
-  const canFire = mine || props.world.you.role === 'owner';
+  // Repo agents come with the repository: they can't be fired.
+  const canFire = agent.kind !== 'repo' && (mine || props.world.you.role === 'owner');
   const xp = levelProgress(agent.xp);
   const permission = PERMISSION_MODES.find((m) => m.value === agent.permissionMode)?.label ?? agent.permissionMode;
   const integrations = agent.integrations.map((id) => props.world.settings.integrations.find((i) => i.id === id)?.name ?? id);
@@ -215,8 +216,8 @@ export function AgentPanel(props: { world: Snapshot; agentId: ID; onClose: () =>
         </form>
       ) : (
         <p className="composer hint">
-          You're watching {owner?.name}'s agent: it runs on their Claude account, so only they can message it. Assign it work
-          through the board, or take it over from its computer to continue on your own account.
+          You're watching {owner?.name}'s agent: it runs on their Claude account, so only they can message it or give it
+          work. Take it over from its computer to continue on your own account.
         </p>
       )}
 
