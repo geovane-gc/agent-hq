@@ -1,0 +1,11 @@
+{
+  "name": "@agent-hq/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "The Agent HQ desktop app (Electron).",
+  "main": "main.cjs",
+  "devDependencies": {
+    "electron": "^38.0.0"
+  }
+}

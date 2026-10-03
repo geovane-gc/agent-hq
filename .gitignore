@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.agent-hq/
+.agent-hq-runner/
+*.db
+*.db-wal
+*.db-shm
+owner-token
+.DS_Store

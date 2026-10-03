@@ -1,0 +1,24 @@
+{
+  "name": "@agent-hq/core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agent-hq": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "dev": "node --watch src/index.ts --dev"
+  },
+  "dependencies": {
+    "@agent-hq/protocol": "0.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12"
+  },
+  "optionalDependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.15"
+  }
+}

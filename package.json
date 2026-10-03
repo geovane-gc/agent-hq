@@ -1,0 +1,33 @@
+{
+  "name": "agent-hq",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A virtual 3D office for managing AI coding agents.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/web",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "node scripts/dev.mjs --web",
+    "start": "node scripts/start.mjs",
+    "start:web": "node packages/core/src/index.ts",
+    "build": "npm run build -w @agent-hq/web",
+    "join": "node packages/core/src/index.ts join",
+    "typecheck": "tsc -p packages/core && tsc -p apps/web",
+    "models": "blender --background --factory-startup --python assets/blender/build_assets.py -- --out apps/web/public/models"
+  },
+  "overrides": {
+    "rollup": "npm:@rollup/wasm-node@^4.50.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
