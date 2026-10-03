@@ -10,7 +10,7 @@ import type { Interactable } from './interact.ts';
 import { Label } from './Label.tsx';
 import { DeskSet } from './decor/DeskSet.tsx';
 import { Character, type CharacterClip } from './models.tsx';
-import { getCodeTexture } from './textures.ts';
+import { DECAL, getCodeTexture } from './textures.ts';
 
 // One desk: table, monitor, keyboard, chair and (if staffed) the agent.
 // Modeled with the agent facing -Z; the parent group rotates it into place.
@@ -32,7 +32,7 @@ const CLIPS: Record<Exclude<AgentStatus, 'offline'>, CharacterClip> = {
 
 /** The live screen: scrolling code while working, blinking when the agent needs you. */
 function useScreenMaterial(status: AgentStatus) {
-  const material = useMemo(() => new THREE.MeshBasicMaterial({ toneMapped: false }), []);
+  const material = useMemo(() => new THREE.MeshBasicMaterial({ toneMapped: false, ...DECAL }), []);
   const texture = useMemo(() => {
     const t = getCodeTexture().clone();
     t.needsUpdate = true;

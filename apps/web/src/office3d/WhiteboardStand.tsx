@@ -5,6 +5,7 @@ import { boardAt, openWhiteboard, openWhiteboardAt, useThumbnail, useWhiteboards
 import type { Interactable } from './interact.ts';
 import { Label } from './Label.tsx';
 import { fixtures, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
+import { DECAL, filtered } from './textures.ts';
 
 // A drawing whiteboard in the 3D world, showing a live thumbnail of its board
 // (rendered by whoever edits it, refetched when it changes). Clicking it opens
@@ -47,12 +48,7 @@ function useBoardTexture(dataUrl: string | null, aspect: number) {
     c.height = Math.round(TEXTURE_WIDTH / aspect);
     return c;
   }, [aspect]);
-  const texture = useMemo(() => {
-    const t = new THREE.CanvasTexture(canvas);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 4;
-    return t;
-  }, [canvas]);
+  const texture = useMemo(() => filtered(new THREE.CanvasTexture(canvas)), [canvas]);
   useEffect(() => () => texture.dispose(), [texture]);
   useEffect(() => {
     const ctx = canvas.getContext('2d')!;
@@ -113,7 +109,7 @@ export function WhiteboardStand(props: WhiteboardStandProps) {
       </mesh>
       <mesh position={[0, elevation, z + 0.021]}>
         <planeGeometry args={[w, h]} />
-        <meshBasicMaterial map={texture} toneMapped={false} />
+        <meshBasicMaterial map={texture} toneMapped={false} {...DECAL} />
       </mesh>
       {/* marker tray */}
       <mesh position={[0, elevation - h / 2 - 0.035, z + 0.05]} castShadow>
