@@ -9,6 +9,7 @@ import type {
   ClaudeAccount,
   CommandName,
   Commands,
+  DecorCommandName,
   HostCommandName,
   HostToRunner,
   ID,
@@ -26,6 +27,8 @@ import type {
 import { ACCOUNTS_DIR } from './accounts.ts';
 import type { Config } from './config.ts';
 import type { Db } from './db.ts';
+import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '@agent-hq/protocol/catalog';
+import type { Decor } from './decor.ts';
 import type { Economy } from './economy.ts';
 import { hasCommits, initRepo, originUrl, type HandoffResult } from './git.ts';
 import { handoffPrompt } from './handoff.ts';
@@ -75,9 +78,6 @@ interface PendingApproval {
 const XP_PER_TURN = 10;
 /** How long a repo agent takes to walk between the balcony and a hot desk (the client animates it). */
 const WALK_MS = 2500;
-const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0662f'];
-const HAIRS = ['#2c1b10', '#3b2a1a', '#6a4e2e', '#b8860b', '#1c1c1c', '#a33b20', '#d8d8d8'];
-const HAIR_STYLES: Appearance['hairStyle'][] = ['short', 'long', 'bun', 'bald'];
 
 const OWNER_ONLY = new Set<CommandName>([
   'create_building', 'update_building', 'remove_building', 'create_floor', 'update_floor', 'remove_floor',
@@ -88,7 +88,7 @@ const OWNER_ONLY = new Set<CommandName>([
 const MANAGER_COMMANDS = new Set<CommandName>(['create_task', 'assign_task']);
 
 const pick = <T>(list: T[]) => list[Math.floor(Math.random() * list.length)];
-const randomAppearance = (shirt: string): Appearance => ({ skin: pick(SKINS), hair: pick(HAIRS), shirt, hairStyle: pick(HAIR_STYLES) });
+const randomAppearance = (shirt: string): Appearance => ({ skin: pick(SKIN_TONES), hair: pick(HAIR_COLORS), shirt, hairStyle: pick(HAIR_STYLES) });
 
 function requireText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} is required`);
@@ -141,6 +141,8 @@ export class Orchestrator {
   private accountTimer: NodeJS.Timeout | null = null;
   /** Tycoon: the office's economy (set by OfficeHost). Gates hiring in career mode. */
   economy: Economy | null = null;
+  /** Office customization: decorations and desk setups (set by OfficeHost). */
+  decor: Decor | null = null;
 
   constructor(store: Store, db: Db, config: Config, terminal: BossTerminal) {
     this.store = store;
@@ -321,12 +323,19 @@ export class Orchestrator {
       terminalAvailable: you.role === 'owner' && actor.kind === 'user',
       office: this.economy?.office ?? null,
       economy: this.economy?.summary() ?? null,
+      decor: this.decor?.items() ?? [],
+      desks: this.decor?.deskSetups() ?? [],
     };
   }
 
   // ------------------------------------------------------------------ commands
 
   async handle<K extends CommandName>(command: K, args: Commands[K]['args'], actor: Actor): Promise<Commands[K]['result']> {
+    // Office customization (decorate mode) has its own module and permission rules; players only.
+    if (this.decor?.handles(command)) {
+      if (actor.kind !== 'user') throw new Error('Agents cannot decorate');
+      return this.decor.handle(command, args as never, actor.user) as Commands[K]['result'];
+    }
     const handler = (this.handlers as Record<string, (a: unknown, u: User, actor: Actor) => unknown>)[command];
     if (!handler) throw new Error(`Unknown command: ${command}`);
     let user: User;
@@ -577,7 +586,7 @@ export class Orchestrator {
 
   /** Host commands (offices, economy) are handled by OfficeHost, not here. */
   private readonly handlers: {
-    [K in Exclude<CommandName, HostCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
+    [K in Exclude<CommandName, HostCommandName | DecorCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
   } = {
     // ---- world
     create_building: ({ name, kind, color }) => {
@@ -592,7 +601,11 @@ export class Orchestrator {
       return building;
     },
 
-    update_building: ({ id, patch }) => this.store.patch('building', id, patch),
+    update_building: ({ id, patch }) => {
+      // The rooftop sign is free text shown to everyone: keep it short (empty = the company name).
+      if (patch.sign !== undefined) patch = { ...patch, sign: typeof patch.sign === 'string' ? patch.sign.trim().slice(0, 40) || null : null };
+      return this.store.patch('building', id, patch);
+    },
 
     remove_building: ({ id }) => {
       const floors = this.store.all('floor').filter((f) => f.buildingId === id);
@@ -709,7 +722,7 @@ export class Orchestrator {
         integrations: (integrations ?? []).filter((i) => known.has(i)),
         floorId,
         ownerId: user.id,
-        appearance: appearance ?? { skin: pick(SKINS), hair: pick(HAIRS), shirt: pick(PALETTE), hairStyle: pick(HAIR_STYLES) },
+        appearance: appearance ?? { skin: pick(SKIN_TONES), hair: pick(HAIR_COLORS), shirt: pick(PALETTE), hairStyle: pick(HAIR_STYLES) },
         status: online ? 'idle' : 'offline',
         activity: null,
         currentTaskId: null,

@@ -28,6 +28,10 @@ claude --stdio--> hq-mcp.ts --ws--> host          (board tools for agents/coordi
 claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate limits)
 ```
 
+The customization catalog (every decoration, desk option, room style and theme, with prices) is data in
+`packages/protocol/src/catalog.ts`, shared by the host (validation, prices) and the web app (one 3D builder per item in
+`apps/web/src/office3d/decor/items.ts`). The color and appearance palettes live there too.
+
 ### packages/core
 
 | File | Role |
@@ -49,6 +53,7 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `offices.ts` | Offices as separate saves (`<data>/offices.json`, one data dir each; a pre-offices install becomes the sandbox save "My office"). Opens one at a time and switches in-process; also answers the host commands (offices, ledger) |
 | `machine-accounts.ts` | The host owner's Claude accounts are machine-wide: records in `<data>/claude-accounts.json`, config dirs in `<data>/claude-accounts`, shown in every office. Teammates' accounts stay in the office database |
 | `economy.ts`, `economy-config.ts` | The ledger: revenue for verified merged work (once per task), token costs as expenses, hiring fees and career-mode gating. Every balance number lives in `economy-config.ts` |
+| `decor.ts` | Office customization: decorations per floor and desk setups per agent (entities `decor` and `desk_setup`), with career pricing through the ledger (`furnishing` entries: bought items cost their catalog price, sold ones refund it) |
 | `delivery.ts` | Git checks behind revenue: is a task branch merged into the default branch (merge, rebase or squash), and how many lines changed |
 
 ### apps/web
@@ -64,6 +69,8 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `office3d/Players.tsx` | Other players: walking avatars, the boss at their desk, everyone else by the elevator |
 | `office3d/CampusScene.tsx` | Buildings as towers with one storey per floor; lit windows show activity |
 | `office3d/Label.tsx` | In-world HTML labels through a stable portal |
+| `office3d/decor/*` | Decorate mode: item builders (`items.ts`; parts merged per material and drawn with instancing), placement and collisions, the in-scene editor, desk sets, room styles (floor, walls, windows, lighting presets) and building exteriors |
+| `components/Decorate.tsx` | Decorate mode's HUD: catalog with rendered thumbnails, room style and themes, desk upgrades, undo/redo |
 | `components/AgentTerminal.tsx` | An agent's real Claude Code terminal (xterm.js) shown on the zoomed monitor |
 | `components/*` | Other HUD panels: board, forms, history and settings, team and invites, usage, boss terminal |
 

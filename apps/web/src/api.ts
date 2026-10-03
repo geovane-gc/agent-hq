@@ -70,6 +70,11 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'presence_left': return { ...world, presence: world.presence.filter((p) => p.userId !== e.userId) };
     case 'mail': return { ...world, mail: upsert(world.mail, e.mail).sort((a, b) => b.createdAt - a.createdAt) };
     case 'ledger': return { ...world, economy: e.economy };
+    // office customization (decorate mode)
+    case 'decor': return { ...world, decor: upsert(world.decor, e.item) };
+    case 'decor_removed': return { ...world, decor: without(world.decor, e.id) };
+    case 'desk_setup': return { ...world, desks: [...world.desks.filter((d) => d.agentId !== e.setup.agentId), e.setup] };
+    case 'desk_setup_removed': return { ...world, desks: world.desks.filter((d) => d.agentId !== e.agentId) };
     default: return world;
   }
 }

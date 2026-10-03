@@ -15,6 +15,7 @@ import type {
   Task,
   User,
 } from '@agent-hq/protocol';
+import { PALETTE } from '@agent-hq/protocol/catalog';
 import type { Db } from './db.ts';
 import { githubUrl } from './github.ts';
 import { DEFAULT_INTEGRATIONS } from './integrations.ts';
@@ -37,13 +38,16 @@ type PublicKind = Exclude<Kind, 'invite'>;
 
 export const DEFAULT_THEME: FloorTheme = {
   floor: 'wood',
+  wall: 'paint',
   wallColor: '#e9e4da',
   accentColor: '#3d63dd',
+  lighting: 'daylight',
+  view: 'city',
   plants: true,
   lounge: true,
 };
 
-export const PALETTE = ['#3d63dd', '#e5484d', '#30a46c', '#f76b15', '#8e4ec6', '#12a594', '#d6409f', '#ffb224'];
+export { PALETTE };
 
 const DEFAULT_SETTINGS: Settings = { maxAgents: 10, dispatchMode: 'auto', gamification: true, integrations: DEFAULT_INTEGRATIONS, takeoverPolicy: 'approval' };
 

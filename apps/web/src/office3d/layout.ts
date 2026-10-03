@@ -198,3 +198,15 @@ export function colliders(plan: FloorPlan, theme: FloorTheme): Rect[] {
   if (theme.plants) for (const p of f.plants) out.push(box(p.position[0], p.position[2], 0.3 * p.scale, 0.3 * p.scale));
   return out;
 }
+
+// ---------------------------------------------------------------- office customization
+// Shared by the room (where windows are drawn) and decorate mode (wall decor can't cover them).
+
+/** Window centers along the back wall (x) and the left wall (z). */
+export function windowSpots(plan: FloorPlan): { back: number[]; left: number[] } {
+  const back: number[] = [];
+  for (let x = plan.boss.maxX + 6.2; x < plan.maxX - 3.4; x += 3.2) back.push(x);
+  const left: number[] = [];
+  for (let z = plan.minZ + 1.5; z < plan.maxZ - 1; z += 3) left.push(z);
+  return { back, left };
+}

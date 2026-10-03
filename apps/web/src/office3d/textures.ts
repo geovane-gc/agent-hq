@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 // Procedural textures drawn on canvases, so the office needs no binary assets.
 
-function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void) {
+export function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void) {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;

@@ -5,6 +5,7 @@ import { TakeoverAlerts } from './components/Accounts.tsx';
 import { AgentPanel } from './components/AgentPanel.tsx';
 import { AgentTerminal } from './components/AgentTerminal.tsx';
 import { Board } from './components/Board.tsx';
+import { DecoratePanel } from './components/Decorate.tsx';
 import { Avatars, FloorPicker, MainMenu, Notifications, StatusCard, type MenuItem } from './components/Hud.tsx';
 import { AgentModal, BuildingModal, FloorModal, NewFloorModal, NewProjectModal, NewTaskModal } from './components/forms.tsx';
 import { BossComputer } from './components/Inbox.tsx';
@@ -18,6 +19,7 @@ import { floorLabel } from './format.ts';
 import { CampusScene } from './office3d/CampusScene.tsx';
 import type { CameraMode } from './office3d/Controls.tsx';
 import { OfficeScene } from './office3d/OfficeScene.tsx';
+import { editor, useEditor } from './office3d/decor/editor.ts';
 
 type Overlay =
   | { kind: 'hire' }
@@ -55,8 +57,11 @@ export function App() {
   /** Floor picker (from the status card) and main menu popovers. */
   const [picker, setPicker] = useState(false);
   const [menu, setMenu] = useState(false);
+  /** Decorate mode (owner): build/decorate the current floor. */
+  const decorating = useEditor().open;
 
   useEffect(() => store('hq-view', view), [view]);
+  useEffect(() => { if (editor.get().open) editor.close(); }, [view, floorId]);
   useEffect(() => store('hq-camera', mode), [mode]);
   useEffect(() => { if (floorId) store('hq-floor', floorId); }, [floorId]);
   useEffect(() => {
@@ -74,7 +79,7 @@ export function App() {
       if (e.key === 'Escape' && !document.pointerLockElement && !inTerminal) { setOverlay(null); setMenu(false); setPicker(false); }
       // M opens the menu, unless the player is typing, in a dialog or walking with the mouse captured.
       const busy = !!(e.target as HTMLElement | null)?.closest?.('input, textarea, select, .xterm, [role="dialog"]');
-      if (e.key.toLowerCase() === 'm' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !busy && !document.pointerLockElement && !document.querySelector('.modal-backdrop, .monitor-overlay')) {
+      if (e.key.toLowerCase() === 'm' && !e.repeat && !editor.get().open && !e.ctrlKey && !e.metaKey && !e.altKey && !busy && !document.pointerLockElement && !document.querySelector('.modal-backdrop, .monitor-overlay')) {
         setPicker(false);
         setMenu((open) => !open);
       }
@@ -139,7 +144,11 @@ export function App() {
     { icon: '🧑‍💻', label: 'Recruit an agent', hint: `${floorStaff.length} of ${floor.desks} desks taken`, onSelect: () => setOverlay({ kind: 'hire' }) },
     ...(owner ? [
       { icon: '📁', label: 'Add a project', hint: projects.length ? projects.map((p) => p.name).join(', ') : 'A GitHub repository for this floor', onSelect: () => setOverlay({ kind: 'project' }) },
-      { icon: '🎨', label: 'Customize floor', hint: 'Desks, floor and wall colors', onSelect: () => setOverlay({ kind: 'floor' }) },
+      {
+        icon: '🛋️', label: 'Decorate', hint: 'Furniture, room style, lighting and desks',
+        onSelect: () => { closeTerminal(); setAgentId(null); setOverlay(null); setMode('iso'); editor.open(); },
+      },
+      { icon: '🎨', label: 'Floor settings', hint: 'Name, number of desks', onSelect: () => setOverlay({ kind: 'floor' }) },
     ] : []),
   ] : view === 'campus' && owner ? [
     { icon: '🏗️', label: 'New building', hint: 'A studio for another kind of work', onSelect: () => setOverlay({ kind: 'building' }) },
@@ -181,13 +190,15 @@ export function App() {
           onElevator={nextFloor}
           onTerminal={() => setOverlay({ kind: 'computer' })}
           onSummon={(agentId) => setOverlay({ kind: 'summon', agentId })}
+          decorating={decorating}
         />
       ) : (
         <div className="splash"><p className="muted">No floors yet.</p></div>
       )}
 
       {/* ---------------- HUD */}
-      {!focusAgentId && (
+      {decorating && view === 'office' && floor && <DecoratePanel world={world} floor={floor} />}
+      {!focusAgentId && !decorating && (
         <StatusCard
           world={world}
           floor={view === 'office' ? floor : undefined}
@@ -212,7 +223,7 @@ export function App() {
         </>
       )}
 
-      <div className="hud-corner">
+      <div className="hud-corner" style={decorating ? { display: 'none' } : undefined}>
         <div className="seg icons" role="group" aria-label="View">
           <button className={view === 'campus' ? 'active' : ''} aria-pressed={view === 'campus'} onClick={() => { closeTerminal(); setView('campus'); }} title="Campus: every building">🏙️</button>
           <button className={view === 'office' && mode === 'iso' ? 'active' : ''} aria-pressed={view === 'office' && mode === 'iso'} onClick={() => { closeTerminal(); setView('office'); setMode('iso'); }} title="Office overview: drag to rotate, wheel to zoom">🗺️</button>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { Agent, AgentStatus, Building, Floor, ID, LedgerEntry, Snapshot, TaskStatus } from '@agent-hq/protocol';
+import { BUILDING_ICONS } from '@agent-hq/protocol/catalog';
 import { STATUS_LABEL } from '../agentUtil.ts';
 import { floorLabel, humanize, initials, toolLabel, usd } from '../format.ts';
 import { CashBadge, openFinances } from './Finance.tsx';
@@ -8,7 +9,7 @@ import { RateMeters } from './Usage.tsx';
 // The heads-up display: one status card, one menu, notification cards.
 // Everything else stays hidden until the player asks for it.
 
-export const BUILDING_ICON = { web: '🌐', desktop: '🖥️', game: '🎮', custom: '🏢' } as const;
+export const BUILDING_ICON = BUILDING_ICONS;
 
 /** Statuses in the order the HUD lists them: what needs you first. */
 const STATUS_ORDER: AgentStatus[] = ['awaiting_approval', 'error', 'working', 'idle', 'offline'];
