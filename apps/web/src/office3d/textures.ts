@@ -2,16 +2,46 @@ import * as THREE from 'three';
 
 // Procedural textures drawn on canvases, so the office needs no binary assets.
 
+/**
+ * Asked of every texture; three clamps it to what the GPU supports (16 on
+ * Apple Silicon and most desktop GPUs), so there's no need to wait for the renderer.
+ */
+const MAX_ANISOTROPY = 16;
+
+/**
+ * Filtering for any texture drawn on a surface: trilinear mipmaps, so detail
+ * smaller than a pixel averages out instead of shimmering as the camera moves,
+ * and full anisotropic filtering, so floors and walls seen at a grazing angle
+ * stay sharp instead of smearing. Any size works (WebGL 2 mipmaps
+ * non-power-of-two textures). Every texture should go through this, or through
+ * `canvasTexture`, which does.
+ */
+export function filtered<T extends THREE.Texture>(tex: T): T {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = MAX_ANISOTROPY;
+  return tex;
+}
+
+/** A texture drawn once on a canvas, filtered for use on a surface. */
 export function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void) {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   draw(canvas.getContext('2d')!);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
+  return filtered(new THREE.CanvasTexture(canvas));
 }
+
+/**
+ * Material props for a flat face laid over another one a millimeter or so
+ * away (a screen in its bezel, a print in its frame, coffee in a mug): pulls
+ * it towards the camera in the depth test, so the two surfaces can't trade
+ * places from frame to frame (z-fighting, seen as flicker while the camera moves).
+ * Spread into a material (`<meshBasicMaterial {...DECAL} />`) or `Object.assign` it.
+ */
+export const DECAL = { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 } as const;
 
 let codeTexture: THREE.CanvasTexture | null = null;
 
