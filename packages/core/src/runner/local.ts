@@ -5,6 +5,7 @@ import {
   accountStatus, ensureSessionInConfigDir, removeAccount, resolveConfigDir, startAccountLogin, type AccountRemoval, type AccountStatus,
 } from '../accounts.ts';
 import type { AgentAdapter, AgentSession, PermissionDecision } from '../adapters/adapter.ts';
+import { pickFolder } from '../folder-picker.ts';
 import { addWorktree, handoffBranch, removeWorktree, syncBranchFromOrigin, type HandoffResult } from '../git.ts';
 import { platformMcpConfig } from '../integrations.ts';
 import { agentWorkspace, buildSystemPrompt, memoryFile, repoAgentSystemPrompt } from '../memory.ts';
@@ -188,5 +189,9 @@ export class LocalRunner implements Runner {
     const worktree = task.worktreePath && existsSync(task.worktreePath) ? task.worktreePath : null;
     const result = await handoffBranch(ws.repoPath, worktree, task.branch, `WIP: hand off "${task.title}" (Agent HQ takeover)`);
     return { ...result, notes };
+  }
+
+  pickFolder(defaultPath: string | null): Promise<string | null> {
+    return pickFolder(defaultPath);
   }
 }

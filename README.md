@@ -58,7 +58,8 @@ into their monitor so you can type straight into their terminal.
 - **The balcony crew**: the agents a repository defines in `.claude/agents` hang out on the office balcony, smoking.
   Summon one with a job and it walks to a hot desk and runs `claude --agent <name>` (read-only agents work in the
   repository itself, agents that edit get their own worktree and branch). When it's done it mails you a report and goes
-  back to the balcony. They can't be fired.
+  back to the balcony. They can't be fired. Every floor has a balcony; until its projects define agents it only has
+  empty benches (click them for how to add some, and to re-scan).
 - **Boss computer**: your inbox of reports (reply to keep the conversation going: the agent resumes the same Claude Code
   session) and, for the owner, a private shell on the host.
 - **Optional integrations**: give individual agents MCP servers for browser testing (Playwright), GitHub, Figma,
@@ -117,7 +118,8 @@ The `?token=…` in the link makes you the office owner. Keep it private.
 
 1. **Pick a floor.** From the campus, click a building's storey, or use the elevator and the directory in the office.
 2. **Add a project.** A project is a GitHub repository (Menu → Add a project): a local clone whose `origin` is on
-   GitHub, or a new repository created from the game with `gh`. Tasks always belong to a project.
+   GitHub, or a new repository created from the game with `gh`. **Browse…** opens your system's folder chooser (or type
+   the path). Tasks always belong to a project.
 3. **Recruit.** Click an empty desk. Choose a name, role, model, permission mode and look; tick *Coordinator* if this agent
    should plan and delegate; pick optional integrations.
 4. **Give work.** Open the board (the whiteboard, or the HUD button) and add tasks, or click an agent's computer and use

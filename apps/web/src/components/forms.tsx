@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Agent, Appearance, Building, BuildingKind, Commands, Floor, FloorMaterial, ID, PermissionMode, Snapshot } from '@agent-hq/protocol';
 import { COORDINATOR, MODELS } from '../agentUtil.ts';
-import { client } from '../api.ts';
+import { client, pickFolder } from '../api.ts';
 import { randomAgentName } from '../names.ts';
 import { assignBlocked } from './Accounts.tsx';
 import { HiringFeeNote } from './Finance.tsx';
@@ -182,12 +182,56 @@ function GithubAccount() {
   );
 }
 
+/**
+ * A folder on the machine that runs your agents: typed, or chosen with the
+ * system's folder dialog (the desktop app's own, or one the host opens).
+ */
+function FolderField(props: { label: string; value: string; onChange: (path: string) => void; placeholder: string }) {
+  const [picking, setPicking] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const browse = async () => {
+    setPicking(true);
+    setProblem(null);
+    try {
+      const chosen = await pickFolder(props.value.trim() || undefined);
+      if (chosen) props.onChange(chosen);
+    } catch (err) {
+      setProblem((err as Error).message);
+    } finally {
+      setPicking(false);
+    }
+  };
+  return (
+    <label>{props.label}
+      <span className="input-with-btn">
+        <input required value={props.value} onChange={(e) => props.onChange(e.target.value)} placeholder={props.placeholder} spellCheck={false} autoComplete="off" />
+        <button type="button" className="ghost browse" onClick={browse} disabled={picking}>{picking ? 'Choosing…' : 'Browse…'}</button>
+      </span>
+      {picking && !window.agentHQ && <span className="hint folder-note">Choose a folder in the dialog that just opened (it may be behind this window).</span>}
+      {problem && <span className="hint folder-note">{problem}</span>}
+    </label>
+  );
+}
+
+/** `folder` inside `parent`, with the parent's own separator; `parent` itself when it already is that folder. */
+function joinFolder(parent: string, folder: string): string {
+  const sep = parent.includes('\\') && !parent.includes('/') ? '\\' : '/';
+  const base = parent.replace(/[\\/]+$/, '');
+  if (!folder || base.split(/[\\/]/).pop() === folder) return parent;
+  return `${base}${sep}${folder}`;
+}
+
 /** Every project is a GitHub repository: an existing clone, or a new repository created from here. */
 export function NewProjectModal(props: { floorId: ID; note?: string; onClose: () => void }) {
   const [mode, setMode] = useState<'link' | 'create'>('link');
   const [name, setName] = useState('');
   const [repoName, setRepoName] = useState<string | null>(null);
+  const [clone, setClone] = useState('');
+  const [parent, setParent] = useState('');
   const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  const repo = repoName ?? slug(name);
+  // A new repository gets its own folder, named after it, inside the chosen one.
+  const target = parent.trim() ? joinFolder(parent.trim(), repo.split('/').pop() ?? '') : '';
   return (
     <FormModal
       title="New project"
@@ -196,33 +240,34 @@ export function NewProjectModal(props: { floorId: ID; note?: string; onClose: ()
       onClose={props.onClose}
       onSubmit={(d) => client.request('create_project', {
         name: str(d, 'name'),
-        repoPath: str(d, 'repoPath'),
+        repoPath: mode === 'create' ? target : clone.trim(),
         floorId: props.floorId,
         createGithubRepo: mode === 'create' ? { name: str(d, 'repoName'), private: d.get('private') === 'on' } : null,
       })}
     >
       {props.note && <p className="callout">{props.note}</p>}
-      <div className="tabs inline">
-        <button type="button" className={mode === 'link' ? 'active' : ''} onClick={() => setMode('link')}>Link a GitHub clone</button>
-        <button type="button" className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>Create a new GitHub repository</button>
+      <div className="tabs inline segmented" role="tablist">
+        <button type="button" role="tab" aria-selected={mode === 'link'} className={mode === 'link' ? 'active' : ''} onClick={() => setMode('link')}>Link a GitHub clone</button>
+        <button type="button" role="tab" aria-selected={mode === 'create'} className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>Create a new GitHub repository</button>
       </div>
       <label>Name<input name="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} /></label>
       {mode === 'link' ? (
         <>
-          <label>Local folder<input name="repoPath" required placeholder="C:\dev\my-app or ~/dev/my-app" /></label>
+          <FolderField label="Local folder" value={clone} onChange={setClone} placeholder="C:\dev\my-app or ~/dev/my-app" />
           <p className="hint">The root of a git repository whose <code>origin</code> is on GitHub, for example a clone of it.</p>
         </>
       ) : (
         <>
-          <label>Local folder<input name="repoPath" required placeholder="~/dev/my-app (created if it doesn't exist)" /></label>
           <div className="grid2">
             <label>Repository name
-              <input name="repoName" required value={repoName ?? slug(name)} onChange={(e) => setRepoName(e.target.value)} placeholder="my-app or my-org/my-app" />
+              <input name="repoName" required value={repo} onChange={(e) => setRepoName(e.target.value)} placeholder="my-app or my-org/my-app" />
             </label>
             <label className="check"><input type="checkbox" name="private" defaultChecked /> Private</label>
           </div>
+          <FolderField label="Create in" value={parent} onChange={setParent} placeholder="C:\dev or ~/dev" />
           <p className="hint">
-            Agent HQ initializes git in the folder if needed, creates the repository with <code>gh repo create</code>, makes it
+            {target ? <>The project goes in <code>{target}</code>, created if it doesn't exist. </> : null}
+            Agent HQ initializes git there if needed, creates the repository with <code>gh repo create</code>, makes it
             the <code>origin</code> and pushes.
           </p>
           <GithubAccount />

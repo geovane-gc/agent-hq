@@ -207,8 +207,8 @@ export function Room(props: {
   onTerminal: (() => void) | null;
   /** Unread reports in your inbox, shown on the boss computer. */
   unread?: number;
-  /** The balcony outside the front wall, if this floor has one: that stretch of wall is glass. */
-  balcony?: Rect | null;
+  /** The balcony outside the front wall: that stretch of wall is glass. */
+  balcony: Rect;
 }) {
   const { plan, theme, balcony } = props;
   const f = fixtures(plan);
@@ -237,7 +237,7 @@ export function Room(props: {
       <Wall from={[plan.minX, plan.minZ]} to={[plan.maxX, plan.minZ]} height={WALL_H} color={wall} />
       <Wall from={[plan.minX, plan.minZ]} to={[plan.minX, plan.maxZ]} height={WALL_H} color={wall} />
       <Wall from={[plan.maxX, plan.minZ]} to={[plan.maxX, plan.maxZ]} height={sideH} color={wall} />
-      {balcony && !props.cutaway ? (
+      {!props.cutaway ? (
         <>
           <Wall from={[plan.minX, plan.maxZ]} to={[balcony.minX, plan.maxZ]} height={sideH} color={wall} />
           <Glass from={[balcony.minX, plan.maxZ]} to={[balcony.maxX, plan.maxZ]} />

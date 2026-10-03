@@ -37,6 +37,16 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   createReadStream(file).pipe(res);
 }
 
+/**
+ * True when the connection comes from this machine and wasn't relayed by a
+ * proxy or tunnel: the player is sitting at the host, in front of its screen.
+ */
+function fromThisMachine(req: IncomingMessage): boolean {
+  const address = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+  const loopback = address === '::1' || address.startsWith('127.');
+  return loopback && !req.headers['x-forwarded-for'] && !req.headers.forwarded && !req.headers['x-real-ip'];
+}
+
 export function startServer(config: Config, host: OfficeHost, terminal: BossTerminal) {
   // The open office (save). Reassigned when the owner switches offices; every
   // connection is dropped then and clients reconnect to the new one.
@@ -65,11 +75,12 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
         else attachLobby(ws);
         return;
       }
-      const actor = orchestrator.authenticate(url.searchParams.get('token') ?? '');
-      if (!actor) {
+      const authenticated = orchestrator.authenticate(url.searchParams.get('token') ?? '');
+      if (!authenticated) {
         ws.close(4001, 'Invalid token');
         return;
       }
+      const actor: Actor = authenticated.kind === 'user' ? { ...authenticated, local: fromThisMachine(req) } : authenticated;
       if (url.searchParams.get('runner') === '1') {
         if (actor.kind !== 'user') return ws.close(4001, 'Invalid token');
         attachRunner(ws, actor);
