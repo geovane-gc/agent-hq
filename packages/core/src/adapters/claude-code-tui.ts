@@ -102,7 +102,7 @@ export class ClaudeCodeTuiSession implements AgentSession {
       cols: 120,
       rows: 34,
       cwd: opts.cwd,
-      env: cleanEnv({ COLORTERM: 'truecolor', FORCE_COLOR: '3' }),
+      env: cleanEnv({ COLORTERM: 'truecolor', FORCE_COLOR: '3', ...(opts.configDir ? { CLAUDE_CONFIG_DIR: opts.configDir } : {}) }),
     });
     this.pty.onData((data) => this.onOutput(data));
     this.pty.onExit(({ exitCode }) => {

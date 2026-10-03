@@ -115,13 +115,30 @@ never interrupt a free conversation someone is watching. Tasks assigned to a bus
 
 ## Multiplayer model
 
-- **Identity**: the owner token lives in `<data>/owner-token`. Invites create member users on first use. Agents get a
-  short-lived token per session for the HQ MCP tools.
-- **Authority**: the owner manages the world (buildings, floors, projects, settings, invites, terminal). Anyone can use
-  the board and hire agents, which are owned by whoever hired them. Only an agent's owner can type into its terminal,
-  message it, interrupt it, edit it or approve its actions.
-- **Execution**: an agent runs on its owner's runner. The owner's runner is in-process on the host; members connect
-  theirs with `agent-hq join`. When a member's runner disconnects, their agents show as offline.
+- **Identity**: the owner token lives in `<data>/owner-token`; the owner is the **boss**. Invites create **manager**
+  users on first use (stored as `member` by older versions and migrated on load). Agents get a short-lived token per
+  session for the HQ MCP tools.
+- **Authority**: the boss manages the world (buildings, floors, projects, settings, invites, terminal). Anyone can use
+  the board and hire agents, which are owned by whoever hired them. Only an agent's owner can edit it.
+- **Execution**: an agent runs on its owner's runner. The boss's runner is in-process on the host; managers connect
+  theirs with `agent-hq join`. When a manager's runner disconnects, their agents show as offline.
+- **Claude accounts**: each player can connect several Claude logins on their own machine, one Claude Code config dir
+  each (`<runner data>/claude-accounts/<id>`, used as `CLAUDE_CONFIG_DIR`; `null` is the machine's default login).
+  Logins run as `claude auth login` in a terminal inside the game (`account_login` runner op, output sent only to that
+  player). The host only stores metadata: email, plan and logged-in state from `claude auth status --json`
+  (`account_status` op), re-checked when a runner connects, after a login, on demand and every 10 minutes. An agent
+  runs on one of its owner's accounts; switching restarts its session there and resumes it (the session file is copied
+  between config dirs on that machine).
+- **Input belongs to the account**: nobody may type into a Claude Code session running on someone else's account. The
+  orchestrator checks it for terminal input, messages, interrupts and approvals, against the agent's owner, its account
+  and the account the live session was started on. Everyone else can watch read-only.
+- **Takeover**: `take_over_agent` moves an agent's work to the caller's machine and account. The host stops the
+  session, asks the previous owner's runner to commit uncommitted work on the task branch as a WIP commit and push it
+  (`handoff` op; aborted if the push fails), removes that worktree, then reassigns the agent (owner and account) and
+  clears the task's session and worktree. The new runner fetches the branch from origin (fast-forwarding a stale local
+  copy), creates its worktree and starts a fresh session whose prompt is a summary built from the transcript the host
+  keeps (requests, files touched, last steps, last message) plus the agent's notes from the previous machine. If the
+  previous machine is offline, whatever is already on origin carries over. Projects need a git origin for this.
 - **Presence**: players walking in first person broadcast their position and render as walking avatars; players in the
   overview are shown parked (the boss at the executive desk, others by the elevator).
 

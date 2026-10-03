@@ -92,6 +92,7 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
       let msg: RunnerMessage;
       try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (msg.type === 'runner_event') runner.deliver(msg.sessionKey, msg.event);
+      else if (msg.type === 'runner_reply') runner.reply(msg);
     });
     ws.on('close', () => orchestrator.detachRunner(userId, runner));
   }
@@ -133,6 +134,8 @@ export function startServer(config: Config, store: Store, orchestrator: Orchestr
     for (const [ws, set] of watching) if (set.has(agentId) && ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
   terminal.on('exit', (code) => broadcast({ type: 'terminal_exit', code }, isOwner));
+  // e.g. a Claude login terminal: only its player sees it.
+  orchestrator.userEvents.on('event', (userId, event) => broadcast(event, (a) => a.kind === 'user' && a.user.id === userId));
 
   return new Promise<{ close: () => void }>((resolve, reject) => {
     http.once('error', reject);
