@@ -72,6 +72,10 @@ function applyEvent(world: Snapshot, e: ServerEvent): Snapshot {
     case 'mail': return { ...world, mail: upsert(world.mail, e.mail).sort((a, b) => b.createdAt - a.createdAt) };
     case 'ledger': return { ...world, economy: e.economy };
     case 'player_mail': case 'player_mail_changed': return { ...world, playerMail: { unread: e.unread } };
+    case 'voice_state': return { ...world, voice: [...world.voice.filter((v) => v.userId !== e.voice.userId), e.voice] };
+    case 'voice_left': return { ...world, voice: world.voice.filter((v) => v.userId !== e.userId) };
+    case 'screen_share': return { ...world, screenShares: [...world.screenShares.filter((s) => s.floorId !== e.share.floorId), e.share] };
+    case 'screen_share_ended': return { ...world, screenShares: world.screenShares.filter((s) => !(s.floorId === e.floorId && s.userId === e.userId)) };
     default: return world;
   }
 }
@@ -98,6 +102,9 @@ class Client {
    * (whiteboards.ts) so cursors and strokes don't re-render the whole app.
    */
   readonly whiteboards = new EventTarget();
+
+  /** WebRTC signaling addressed to this player (voice/engine.ts picks its tab's). */
+  readonly rtc = new EventTarget();
 
   constructor() {
     this.connect();
@@ -165,6 +172,8 @@ class Client {
       } else if (e.type === 'account_login_output') {
         this.loginHistory.set(e.accountId, ((this.loginHistory.get(e.accountId) ?? '') + e.data).slice(-200_000));
         this.accountLogins.dispatchEvent(new CustomEvent(e.accountId, { detail: e.data }));
+      } else if (e.type === 'rtc_signal') {
+        this.rtc.dispatchEvent(new CustomEvent('signal', { detail: e }));
       } else if (e.type === 'terminal_exit') {
         this.terminal.dispatchEvent(new CustomEvent('exit', { detail: e.code }));
       } else if (this.state.world) {

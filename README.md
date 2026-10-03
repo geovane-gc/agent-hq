@@ -71,6 +71,11 @@ into their monitor so you can type straight into their terminal.
 **Together**
 - **Multiplayer**: invite teammates into your office. Their agents run on their own machines with their own Claude
   login through a lightweight runner; everyone sees everyone walking around, and the boss wears a suit.
+- **Voice chat**: talk to the players near your avatar (volume fades with distance, nobody hears you from another
+  floor) or switch to the company-wide channel. Mic off by default, push-to-talk on `V`, device selection, per-player
+  volume and mute, and a ring on whoever is talking.
+- **Meeting room**: every floor has one, with a table and a big wall screen. Walk in (or click *Join meeting*) to be in
+  the room's voice channel; share your screen and it plays on the wall and full size for everyone in the meeting.
 - **Desktop app**: runs as an Electron app by default; a browser version is available too.
 
 ## Screenshots
@@ -136,6 +141,12 @@ The `?token=…` in the link makes you the office owner. Keep it private.
 Walk mode: `W A S D` to move, `Shift` to run, mouse to look, click to use, `Esc` to release the mouse.
 Overview: drag to rotate, right-drag or `W A S D` to pan, wheel to zoom.
 
+**Voice** lives in the bottom-right corner: the mic button (red **● Live** while it transmits), 📍 *Nearby* or 🌐
+*Everyone*, and the people list (devices, push-to-talk, per-player volume and mute). In proximity mode you hear players
+within 8 m of your avatar on your floor (the boss can change the radius). Inside the **meeting room** (next to the boss
+room) everyone in the room hears each other; **🖥 Share screen** puts your screen on the wall for the people in the
+meeting, one sharer at a time. Walking out stops your share.
+
 ## Multiplayer
 
 1. Start the host where teammates can reach it, for example `npm run start:web -- --host 0.0.0.0` on a LAN, or behind a
@@ -167,6 +178,12 @@ free in Settings.
 | `--port` / `AGENT_HQ_PORT` | `4317` | |
 | `--host` / `AGENT_HQ_HOST` | `127.0.0.1` | Agents run commands on your machine: expose with care |
 | `AGENT_HQ_CLAUDE_PATH` | auto-detected | Path to the `claude` binary |
+
+Voice and screen sharing go peer to peer (WebRTC). **Settings → General → Voice & screen sharing** (boss only) holds
+the proximity radius, the STUN servers (default: a public Google STUN server) and an optional **TURN** relay (URL,
+username, credential). Players behind strict NATs or corporate firewalls can't connect without TURN (for example
+[coturn](https://github.com/coturn/coturn)). The TURN credential stays on the host and is only handed to players when
+they join voice. Every player connects to every other one, which works well up to about 8 people in voice.
 
 Integrations (MCP servers) are edited in **Settings → Integrations**. Each entry is a Claude Code `mcpServers` config
 plus the setup it needs (for example the Blender add-on or the Unity package).
@@ -202,6 +219,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together
 - Access is token-based: the owner token in `<data-dir>/owner-token`, one token per invite, and short-lived tokens for
   each agent's MCP tools.
 - Agent HQ never handles Claude credentials. Each player's agents use that player's own Claude Code login.
+- Voice: the mic is never on until you turn it on, and the HUD shows when it is live or your screen is shared. Audio
+  and screens travel directly between players' computers, so players in voice together can see each other's IP
+  address. Agents are never part of voice.
 - Folder trust: Claude Code asks whether to trust new folders. Agent HQ answers "yes" only for the worktrees and scratch
   folders it creates from repositories you added.
 

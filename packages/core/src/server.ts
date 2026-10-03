@@ -212,10 +212,13 @@ export function startServer(config: Config, host: OfficeHost, terminal: BossTerm
   }
 
   const isOwner = (a: Actor) => a.kind === 'user' && a.user.role === 'owner';
+  const isPlayer = (a: Actor) => a.kind === 'user';
+  const MEDIA_EVENTS = new Set<ServerEvent['type']>(['voice_state', 'voice_left', 'screen_share', 'screen_share_ended']);
   const onStoreEvent = (event: ServerEvent) => {
     // Meters and mail are private to one player.
     const to = event.type === 'rate_limits' ? event.userId : event.type === 'mail' ? event.mail.toUserId : null;
-    broadcast(event, to ? (a) => a.kind === 'user' && a.user.id === to : undefined);
+    // Voice and screen sharing are between players; agents' connections don't need them.
+    broadcast(event, to ? (a) => a.kind === 'user' && a.user.id === to : MEDIA_EVENTS.has(event.type) ? isPlayer : undefined);
   };
   const onAgentTerminal = (agentId: string, data: string) => {
     const msg = JSON.stringify({ type: 'event', event: { type: 'agent_terminal_output', agentId, data } } satisfies ServerMessage);

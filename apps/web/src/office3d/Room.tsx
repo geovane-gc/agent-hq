@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Label } from './Label.tsx';
 import { Model } from './models.tsx';
 import type { FloorTheme, Task } from '@agent-hq/protocol';
-import { fixtures, WALL_HEIGHT, type FloorPlan, type Rect } from './layout.ts';
+import { fixtures, meetingRoom, WALL_HEIGHT, type FloorPlan, type Rect } from './layout.ts';
 import type { Interactable } from './interact.ts';
 import { getCarpetTexture, getFloorTexture, getTilesTexture } from './textures.ts';
 
@@ -220,8 +220,10 @@ export function Room(props: {
     return xs;
   }, [plan]);
   const windowsLeft = useMemo(() => {
+    // The meeting room's wall screen hangs on the left wall: no windows there.
+    const meeting = meetingRoom(plan);
     const zs: number[] = [];
-    for (let z = plan.minZ + 1.5; z < plan.maxZ - 1; z += 3) zs.push(z);
+    for (let z = plan.minZ + 1.5; z < plan.maxZ - 1; z += 3) if (z < meeting.minZ - 1 || z > meeting.maxZ + 1) zs.push(z);
     return zs;
   }, [plan]);
 

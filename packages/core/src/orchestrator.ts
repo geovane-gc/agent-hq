@@ -11,6 +11,7 @@ import type {
   Commands,
   HostCommandName,
   PlayerMailCommandName,
+  MediaCommands,
   HostToRunner,
   ID,
   Mail,
@@ -34,6 +35,7 @@ import { handoffPrompt } from './handoff.ts';
 import { createGithubRepo, githubStatus, isRepoRoot, requireGithubOrigin } from './github.ts';
 import { Mailbox } from './mailbox.ts';
 import { isPlayerMailCommand, PlayerMailbox } from './player-mail.ts';
+import { MediaHub } from './media.ts';
 import { taskPrompt } from './memory.ts';
 import { RemoteRunner } from './runner/remote.ts';
 import type { Runner, RunnerSession } from './runner/runner.ts';
@@ -87,7 +89,7 @@ const OWNER_ONLY = new Set<CommandName>([
   'create_building', 'update_building', 'remove_building', 'create_floor', 'update_floor', 'remove_floor',
   'create_project', 'remove_project', 'update_settings', 'create_invite', 'list_invites', 'revoke_invite',
   'remove_member', 'terminal_open', 'terminal_input', 'terminal_resize',
-  'link_project_github', 'set_github_token', 'get_github_status',
+  'link_project_github', 'set_github_token', 'get_github_status', 'set_voice_settings',
 ]);
 const MANAGER_COMMANDS = new Set<CommandName>(['create_task', 'assign_task']);
 
@@ -145,6 +147,8 @@ export class Orchestrator {
   /** In-flight account status checks, per player. */
   private readonly refreshing = new Map<ID, Promise<ClaudeAccount[]>>();
   private accountTimer: NodeJS.Timeout | null = null;
+  /** Voice chat and meeting-room screen sharing: who is in voice, who shares, signaling relay. */
+  readonly media: MediaHub;
   /** Tycoon: the office's economy (set by OfficeHost). Gates hiring in career mode. */
   economy: Economy | null = null;
 
@@ -155,6 +159,7 @@ export class Orchestrator {
     this.terminal = terminal;
     this.mailbox = new Mailbox(db);
     this.playerMail = new PlayerMailbox(db, () => this.store.all('user'), (userId, event) => this.userEvents.emit('event', userId, event));
+    this.media = new MediaHub(store, db, (userId, event) => this.userEvents.emit('event', userId, event));
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -269,6 +274,7 @@ export class Orchestrator {
     if (n > 0 || !this.store.get('user', userId)) return;
     this.store.touch('user', userId, { online: false });
     if (this.presence.delete(userId)) this.store.broadcast({ type: 'presence_left', userId });
+    this.media.gone(userId);
   }
 
   attachRunner(userId: ID, send: (msg: HostToRunner) => void): RemoteRunner {
@@ -325,6 +331,8 @@ export class Orchestrator {
       settings: this.store.settings,
       rateLimits: this.store.rateLimits.get(you.id) ?? null,
       presence: [...this.presence.values()],
+      // Voice and screen shares are for players only.
+      ...(actor.kind === 'user' ? this.media.snapshot() : { voice: [], screenShares: [] }),
       takeovers: this.store.all('takeover'),
       terminalAvailable: you.role === 'owner' && actor.kind === 'user',
       office: this.economy?.office ?? null,
@@ -339,7 +347,8 @@ export class Orchestrator {
       if (actor.kind !== 'user') throw new Error('Only players have mail');
       return this.playerMail.handle(command, args as never, actor.user) as Commands[K]['result'];
     }
-    const handler = (this.handlers as Record<string, (a: unknown, u: User, actor: Actor) => unknown>)[command];
+    const handler = (this.handlers as Record<string, (a: unknown, u: User, actor: Actor) => unknown>)[command]
+      ?? (this.media.handlers as Record<string, ((a: unknown, u: User) => unknown) | undefined>)[command];
     if (!handler) throw new Error(`Unknown command: ${command}`);
     let user: User;
     if (actor.kind === 'agent') {
@@ -587,9 +596,12 @@ export class Orchestrator {
     return this.store.require('agent', agentId);
   }
 
-  /** Host commands (offices, economy) are handled by OfficeHost, whiteboards by Whiteboards (both routed by the server), player mail by PlayerMailbox (see handle), not here. */
+  /**
+   * Host commands (offices, economy) are handled by OfficeHost, whiteboards by Whiteboards (both routed by the server),
+   * player mail by PlayerMailbox and voice/screen sharing by MediaHub (see handle), not here.
+   */
   private readonly handlers: {
-    [K in Exclude<CommandName, HostCommandName | WhiteboardCommandName | PlayerMailCommandName>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
+    [K in Exclude<CommandName, HostCommandName | WhiteboardCommandName | PlayerMailCommandName | keyof MediaCommands>]: (args: Commands[K]['args'], user: User, actor: Actor) => Commands[K]['result'] | Promise<Commands[K]['result']>;
   } = {
     // ---- world
     create_building: ({ name, kind, color }) => {
@@ -1100,7 +1112,9 @@ export class Orchestrator {
           if (!i.config || typeof i.config !== 'object') throw new Error(`Integration ${i.name} needs a config object`);
         }
       }
-      const settings = this.store.setSettings(patch);
+      // Voice settings have their own command: the TURN credential must never land in the broadcast settings.
+      const { voice: _voice, ...rest } = patch;
+      const settings = this.store.setSettings(rest);
       this.dispatch();
       return settings;
     },
@@ -1140,6 +1154,7 @@ export class Orchestrator {
         this.logins.delete(acc.id);
         this.store.remove('account', acc.id);
       }
+      this.media.gone(id);
       this.store.remove('user', id);
       return null;
     },

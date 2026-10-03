@@ -16,6 +16,7 @@ import { EmptyBalconyModal, SummonModal } from './components/SummonModal.tsx';
 import { UsageModal } from './components/Usage.tsx';
 import { WhiteboardLayer } from './components/Whiteboards.tsx';
 import { openWhiteboards } from './whiteboards.ts';
+import { ScreenOverlay, VoiceDock } from './components/Voice.tsx';
 import { floorLabel } from './format.ts';
 import { CampusScene } from './office3d/CampusScene.tsx';
 import type { CameraMode } from './office3d/Controls.tsx';
@@ -243,6 +244,8 @@ export function App() {
         onMail={(threadId) => setOverlay({ kind: 'computer', mail: { threadId }, via: 'menu' })}
       />
       <TakeoverAlerts world={world} onOpen={openAgent} />
+      <VoiceDock world={world} floor={view === 'office' ? floor : undefined} compact={!!focusAgentId} />
+      <ScreenOverlay world={world} />
 
       {terminalAgentId && view === 'office' && (
         <AgentTerminal

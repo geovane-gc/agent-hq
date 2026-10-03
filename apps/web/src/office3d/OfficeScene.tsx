@@ -9,7 +9,8 @@ import { CameraFly, FirstPersonControls, IsoControls, type CameraMode } from './
 import { findInteractable } from './interact.ts';
 import { HtmlLayer, LabelScale } from './Label.tsx';
 import { Balcony } from './Balcony.tsx';
-import { balconyLayout, colliders, fixtures, floorPlan, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
+import { balconyLayout, colliders, fixtures, floorPlan, meetingRoom, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
+import { MeetingRoom } from './MeetingRoom.tsx';
 import { Players } from './Players.tsx';
 import { Room } from './Room.tsx';
 import { easelPlacement, whiteboardCollider, WhiteboardStand } from './WhiteboardStand.tsx';
@@ -105,6 +106,7 @@ export function OfficeScene(props: {
   const { world, floor } = props;
   const plan = useMemo(() => floorPlan(floor.desks), [floor.desks]);
   const fx = useMemo(() => fixtures(plan), [plan]);
+  const meeting = useMemo(() => meetingRoom(plan), [plan]);
   // The drawing whiteboard's easel, by the task board.
   const easel = useMemo(() => easelPlacement(plan), [plan]);
   const solid = useMemo(() => [...colliders(plan, floor.theme), whiteboardCollider(easel.position, easel.rotation)], [plan, floor.theme, easel]);
@@ -193,6 +195,7 @@ export function OfficeScene(props: {
             unread={world.mail.filter((m) => !m.read).length + world.playerMail.unread}
             balcony={balcony}
           />
+          <MeetingRoom world={world} floor={floor} layout={meeting} cutaway={props.mode === 'iso'} />
           <WhiteboardStand position={easel.position} rotation={easel.rotation} spot={floorSpot(floor.id)} newBoardName={`${floor.name} whiteboard`} />
           <Balcony
             layout={balcony}

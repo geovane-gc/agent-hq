@@ -306,6 +306,8 @@ export interface Settings {
    * (a TakeoverRequest). free: anyone may take over right away.
    */
   takeoverPolicy: 'approval' | 'free';
+  /** Voice chat and screen sharing (WebRTC). Change it with set_voice_settings, not update_settings. */
+  voice: VoiceSettings;
 }
 
 /**
@@ -326,7 +328,7 @@ export interface TakeoverRequest {
   createdAt: number;
 }
 
-export interface Snapshot extends TycoonSnapshot, PlayerMailSnapshot {
+export interface Snapshot extends TycoonSnapshot, PlayerMailSnapshot, MediaSnapshot {
   you: User;
   users: User[];
   /** Everyone's connected Claude accounts (metadata only). */
@@ -384,13 +386,14 @@ export type ServerEvent =
   | { type: 'agent_terminal_output'; agentId: ID; data: string }
   | TycoonEvent
   | WhiteboardEvent
-  | PlayerMailEvent;
+  | PlayerMailEvent
+  | MediaEvent;
 
 // ---------------------------------------------------------------- commands (client -> server)
 
 type AgentEditable = 'name' | 'role' | 'model' | 'instructions' | 'permissionMode' | 'floorId' | 'isManager' | 'integrations' | 'appearance';
 
-export interface Commands extends HostCommands, WhiteboardCommands, PlayerMailCommands {
+export interface Commands extends HostCommands, WhiteboardCommands, PlayerMailCommands, MediaCommands {
   create_building: { args: { name: string; kind: BuildingKind; color?: string }; result: Building };
   update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color'>> }; result: Building };
   remove_building: { args: { id: ID }; result: null };
@@ -897,3 +900,96 @@ export interface PlayerMailCommands {
 }
 
 export type PlayerMailCommandName = keyof PlayerMailCommands;
+
+// ================================================================ media: voice chat & meeting-room screen sharing
+// Audio and video flow peer to peer between players' browsers (WebRTC, a full
+// mesh); the host only relays signaling, addressed to one tab, and keeps the
+// runtime state: who is in voice, in which mode, and who is sharing a screen in
+// which floor's meeting room. Agents never take part. Hooked in through
+// `Snapshot extends MediaSnapshot`, `ServerEvent | MediaEvent`,
+// `Commands extends MediaCommands` and `Settings.voice`.
+
+/** proximity: you hear players near your avatar on your floor. global: the company-wide channel. */
+export type VoiceMode = 'proximity' | 'global';
+
+export interface VoiceState {
+  userId: ID;
+  /** Random id of the player's browser tab; WebRTC signals are addressed to it. */
+  peerId: string;
+  mode: VoiceMode;
+  /** The player's mic is live (transmitting) right now. */
+  mic: boolean;
+  /** Floor whose meeting the player joined from outside the room ("Join meeting"); null otherwise. */
+  meeting: ID | null;
+}
+
+/** One active screen share per floor's meeting room. */
+export interface ScreenShare {
+  floorId: ID;
+  userId: ID;
+  peerId: string;
+  startedAt: number;
+}
+
+export interface VoiceSettings {
+  /** STUN servers (a public one by default). */
+  stunUrls: string[];
+  /** Optional TURN relay, needed by players behind strict NATs, e.g. "turn:turn.example.com:3478". */
+  turnUrl: string | null;
+  turnUsername: string | null;
+  /** A TURN credential is stored on the host. It is never broadcast: players fetch it with get_ice_servers. */
+  turnCredentialSet: boolean;
+  /** Proximity chat: beyond this distance (meters) you can't hear someone. */
+  proximityRadius: number;
+}
+
+export interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+export interface IceCandidate {
+  candidate: string;
+  sdpMid: string | null;
+  sdpMLineIndex: number | null;
+  usernameFragment?: string | null;
+}
+
+export type RtcSignal =
+  | { kind: 'offer'; sdp: string }
+  | { kind: 'answer'; sdp: string }
+  | { kind: 'ice'; candidate: IceCandidate };
+
+export interface MediaSnapshot {
+  voice: VoiceState[];
+  screenShares: ScreenShare[];
+}
+
+export type MediaEvent =
+  | { type: 'voice_state'; voice: VoiceState }
+  | { type: 'voice_left'; userId: ID }
+  | { type: 'screen_share'; share: ScreenShare }
+  | { type: 'screen_share_ended'; floorId: ID; userId: ID }
+  /** Sent only to the addressed player; their tab with `toPeerId` handles it. */
+  | { type: 'rtc_signal'; fromUserId: ID; fromPeerId: string; toPeerId: string; signal: RtcSignal };
+
+export interface MediaCommands {
+  /** Joins voice or updates your state. The mic is only live when the player turned it on. */
+  voice_state: { args: { peerId: string; mode: VoiceMode; mic: boolean; meeting: ID | null }; result: VoiceState };
+  /** Leaves voice (ignored if another tab of yours took over meanwhile) and stops your screen shares. */
+  voice_leave: { args: { peerId: string }; result: null };
+  /** Relays an offer, answer or ICE candidate to one tab of another player in voice. */
+  rtc_signal: { args: { toUserId: ID; toPeerId: string; fromPeerId: string; signal: RtcSignal }; result: null };
+  /** Claims the floor's meeting-room screen (one sharer at a time). */
+  screen_share_start: { args: { floorId: ID; peerId: string }; result: ScreenShare };
+  /** The sharer stops sharing; the boss may also stop anyone's share. */
+  screen_share_stop: { args: { floorId: ID }; result: null };
+  /** STUN/TURN servers for RTCPeerConnection, including the TURN credential (players only). */
+  get_ice_servers: { args: Record<string, never>; result: { iceServers: IceServer[] } };
+  /** Owner only. `turnCredential`: undefined keeps the stored one, null or '' clears it. */
+  set_voice_settings: {
+    args: { stunUrls?: string[]; turnUrl?: string | null; turnUsername?: string | null; turnCredential?: string | null; proximityRadius?: number };
+    result: VoiceSettings;
+  };
+}

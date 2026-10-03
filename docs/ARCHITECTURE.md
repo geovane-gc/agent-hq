@@ -53,6 +53,7 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `folder-picker.ts` | The system folder chooser for browser players: AppleScript `choose folder` on macOS, a WinForms `FolderBrowserDialog` through PowerShell on Windows, zenity or kdialog on Linux. Cancel resolves null; one dialog at a time; closed after 10 minutes |
 | `mailbox.ts`, `player-mail.ts` | Mail. Agent reports are `mail` entities. Player-to-player mail lives in its own tables in the office database (`player_mail` plus one `player_mail_box` row per participant: sent/received, read, archived); every query is scoped to the caller's rows, events go only to participants, and deleting removes only your row |
 | `delivery.ts` | Git checks behind revenue: is a task branch merged into the default branch (merge, rebase or squash), and how many lines changed |
+| `media.ts` | Voice and screen sharing: who is in voice (runtime only), one screen share per floor's meeting room, WebRTC signaling relay to one player's tab, STUN/TURN settings (the TURN credential is kept out of the broadcast settings) |
 
 ### apps/web
 
@@ -67,6 +68,10 @@ claude --hooks--> hq-hook.ts --http--> runner     (agent status, usage, rate lim
 | `office3d/Players.tsx` | Other players: walking avatars, the boss at their desk, everyone else by the elevator |
 | `office3d/CampusScene.tsx` | Buildings as towers with one storey per floor; lit windows show activity |
 | `office3d/Label.tsx` | In-world HTML labels through a stable portal |
+| `office3d/MeetingRoom.tsx` | The meeting room: partitions with a door, table and chairs, the wall screen (shared screen as a video texture) and the whiteboard anchor |
+| `voice/engine.ts` | Voice and screen sharing in the browser: WebRTC mesh, mic and screen capture, Web Audio graph (gain by distance, panner, speaking detection), push-to-talk, local preferences |
+| `voice/spatial.ts` | Who hears whom: avatar positions (as `Players.tsx` draws them), meeting membership, channels, proximity gain |
+| `components/Voice.tsx` | Voice dock (mic, nearby/everyone, people and devices), meeting card, full-size shared screen |
 | `components/AgentTerminal.tsx` | An agent's real Claude Code terminal (xterm.js) shown on the zoomed monitor |
 | `components/Whiteboards.tsx`, `WhiteboardEditor.tsx` | The Whiteboards list and the full-screen editor; the editor (Excalidraw) is a lazy chunk loaded on first open |
 | `office3d/WhiteboardStand.tsx` | A drawing whiteboard in the world (easel or wall), showing its board's live thumbnail; placeable anywhere, bound to a board id or a spot |
@@ -207,10 +212,59 @@ never interrupt a free conversation someone is watching. Tasks assigned to a bus
 In every case the text field stays editable, and errors (no dialog tool, no desktop session, timeout, a dialog already
 open) are shown under it.
 
+## Voice chat and the meeting room
+
+Media goes peer to peer between players' browsers (WebRTC); the host is only the signaling channel and the keeper of
+runtime state (nothing is persisted). Agents are never part of it: their connections get no voice events and can't
+use the commands.
+
+- **Joining**: each tab has a random `peerId` and sends `voice_state {peerId, mode, mic, meeting}` (broadcast as
+  `voice_state`; `voice_left` when the player's last connection closes or they call `voice_leave`). The newest tab
+  of a player wins; older ones show "Voice is on in another window".
+- **Signaling**: `rtc_signal {toUserId, toPeerId, fromPeerId, signal}` with an offer, answer or ICE candidate. The
+  host checks both ends are in voice with those peer ids, caps sizes, and delivers it only to the target player
+  (their tab with `toPeerId` handles it).
+- **Full mesh, negotiated once**: every pair of players in voice has one `RTCPeerConnection`; the lower `peerId`
+  offers. Each connection carries an audio and a video transceiver from the start, so nothing is renegotiated: what
+  you send to whom is `sender.replaceTrack(track | null)`. A failed connection is rebuilt after 3 s. The mesh costs
+  one connection per pair and uploads your audio once per listener: fine up to about 8 people in voice; beyond that
+  an SFU would be needed.
+- **Who hears whom** (`voice/spatial.ts`, computed identically by everyone from the presence stream): a player in a
+  floor's meeting room (standing inside it in walk mode, or after *Join meeting*) is in that room's channel;
+  otherwise in their chosen mode. Proximity: same floor and closer than `proximityRadius` (default 8 m), full volume
+  up to 1.5 m then fading quadratically to 0 at the radius; parked players count at their parked spot. Global and
+  meeting channels play at full volume. Senders only send their mic to players who can hear them (with 1 m of slack
+  so listeners fade out instead of being cut off), so a far-away client never receives your voice.
+- **Playback**: remote audio → `AnalyserNode` (speaking indicator) and `GainNode` (distance × your per-player
+  volume, 0 when muted) → HRTF `PannerNode` at the speaker's avatar (proximity in walk mode) → the output device
+  (`AudioContext.setSinkId`). Chrome only feeds remote WebRTC audio into Web Audio while a (muted) media element
+  plays it, so each peer also has one.
+- **Mic**: off by default and never turned on by Agent HQ; modes *off*, *on* and *push-to-talk* (`V`, ignored in
+  inputs and terminals). Turning it off stops the capture (the browser's indicator goes away).
+- **Screen sharing**: `screen_share_start {floorId, peerId}` claims the floor's meeting-room screen (one sharer at a
+  time; refused otherwise), `screen_share_stop` ends it (the sharer, or the boss for anyone's). The sharer's tab
+  sends the capture only to players in that meeting, and stops sharing when it leaves the room, the capture ends or
+  the share disappears. Receivers show it on the wall (`THREE.VideoTexture`) and full size.
+- **ICE**: `Settings.voice` holds the STUN URLs (default `stun:stun.l.google.com:19302`), an optional TURN URL and
+  username, and whether a TURN credential is stored. The credential lives in the office database only and reaches
+  players through `get_ice_servers`, which only players can call. Players behind symmetric NATs need TURN.
+- **Meeting room layout** (`layout.ts → meetingRoom`): the strip below the boss room against the left wall (6 m wide,
+  up to 7 m deep, with its own front partition when the floor is deeper). Its back is the boss room's glass, the
+  right side a partition with a door next to the spawn point. The wall screen hangs on the outer wall facing +X; the
+  long table runs from the screen towards the partition, where `whiteboardAnchor` keeps a 1.2 to 2.4 m stretch of
+  wall clear, facing the screen. `MeetingRoom` takes a `whiteboard` node and mounts it at that anchor (a group named
+  `whiteboard-anchor`); nothing is built there yet.
+- **Electron**: `setupMedia` in `apps/desktop/main.cjs` grants microphone-only `media` and `speaker-selection` to the
+  office's own origin (asking macOS for microphone access when needed), and answers `getDisplayMedia` with the system
+  picker where there is one (macOS 15+), otherwise a small menu of screens and windows with thumbnails.
+
 ## Known limits
 
 - The WebSocket endpoint has no TLS of its own. Use a tunnel or reverse proxy with HTTPS for anything beyond a
-  trusted LAN.
+  trusted LAN. Browsers only allow the microphone and screen capture on HTTPS or `localhost`: teammates opening a
+  plain `http://host:4317` invite can listen to voice but need HTTPS to talk or share their screen.
+- Voice is a full mesh: about 8 people in voice at once. Players behind strict NATs need a TURN server, and players in
+  voice together can see each other's IP addresses.
 - Remote runners need a reachable git `origin` (or a `--repo` mapping) for each project they work on.
 - If the host process is killed abruptly (not closed), agent Claude Code processes can outlive it.
 - An SSH port forward to the host looks local, so the browser folder dialog would open on the host's screen. Tunnels
