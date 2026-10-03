@@ -192,8 +192,8 @@ export interface MeetingRoom extends Rect {
   /** The big screen on the outer wall, facing into the room (+X). Shows the shared screen. */
   screen: WallMount;
   /**
-   * A free stretch of the partition, facing the screen (-X), kept clear for a
-   * collaborative whiteboard. Nothing is built there yet.
+   * A free stretch of the partition, facing the screen (-X), where the
+   * meeting room's whiteboard hangs (OfficeScene mounts a wall WhiteboardStand here).
    */
   whiteboardAnchor: WallMount;
   /** The room is shallower than the floor, so it has its own front partition at maxZ. */

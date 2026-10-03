@@ -132,8 +132,8 @@ An office has any number of named boards; anyone can create one, its creator or 
   back) and `whiteboard_files` (pasted images, 3.5 MB each and 64 MB per board). Changes are written in one
   transaction 1.5 s after the last one (at least every 8 s while drawing), when the last viewer leaves and when the
   office closes.
-- **In the world**: a board can hang at a *spot* (`floor:<id>` is the easel by each floor's task board; one board per
-  spot). `<WhiteboardStand>` shows the board at a spot, or a fixed board id, at any position and rotation, with the
+- **In the world**: a board can hang at a *spot* (`floor:<id>` is the easel by each floor's task board,
+  `meeting:<id>` the wall of that floor's meeting room; one board per spot). `<WhiteboardStand>` shows the board at a spot, or a fixed board id, at any position and rotation, with the
   PNG thumbnail that the player who changed the board renders (every 4 s while drawing, and on close).
 - **Loading**: the editor chunk is only fetched when a board is first opened; Excalidraw's fonts are served by the
   host from `/excalidraw-assets/` (copied at build time, CJK excepted, which falls back to Excalidraw's CDN).
@@ -253,7 +253,9 @@ use the commands.
   right side a partition with a door next to the spawn point. The wall screen hangs on the outer wall facing +X; the
   long table runs from the screen towards the partition, where `whiteboardAnchor` keeps a 1.2 to 2.4 m stretch of
   wall clear, facing the screen. `MeetingRoom` takes a `whiteboard` node and mounts it at that anchor (a group named
-  `whiteboard-anchor`); nothing is built there yet.
+  `whiteboard-anchor`): `OfficeScene` passes a wall `<WhiteboardStand>` sized to the anchor, at spot
+  `meeting:<floorId>`, with a thin collider for its frame and tray. Like the partitions, it is hidden in the overview
+  (find the board in Menu → Whiteboards there).
 - **Electron**: `setupMedia` in `apps/desktop/main.cjs` grants microphone-only `media` and `speaker-selection` to the
   office's own origin (asking macOS for microphone access when needed), and answers `getDisplayMedia` with the system
   picker where there is one (macOS 15+), otherwise a small menu of screens and windows with thumbnails.

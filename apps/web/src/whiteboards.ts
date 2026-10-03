@@ -59,6 +59,9 @@ export function boardAt(boards: WhiteboardInfo[], spot: string): WhiteboardInfo 
 /** The spot of a floor's easel, by the task board. */
 export const floorSpot = (floorId: ID) => `floor:${floorId}`;
 
+/** The spot on a floor's meeting room wall (layout.ts → meetingRoom().whiteboardAnchor). */
+export const meetingSpot = (floorId: ID) => `meeting:${floorId}`;
+
 // ---------------------------------------------------------------- thumbnails
 
 const thumbs = new Map<ID, { version: number; dataUrl: string | null }>();

@@ -16,6 +16,7 @@
 import { useSyncExternalStore } from 'react';
 import type { ID, IceCandidate, IceServer, RtcSignal, ScreenShare, Snapshot, VoiceMode, VoiceState } from '@agent-hq/protocol';
 import { client } from '../api.ts';
+import { notify } from '../notify.ts';
 import { avatarSpots, hearing, meetingOf, type Spot } from './spatial.ts';
 
 export type MicMode = 'off' | 'open' | 'ptt';
@@ -127,10 +128,10 @@ function randomId(): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Keys typed into inputs or terminals are never push-to-talk. */
+/** Keys typed into inputs, terminals or the whiteboard editor (its V is the selection tool) are never push-to-talk. */
 function isTyping(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null;
-  return !!t?.closest?.('input, textarea, select, [contenteditable="true"], .xterm');
+  return !!t?.closest?.('input, textarea, select, [contenteditable="true"], .xterm, [data-captures-keys]');
 }
 
 const rms = (analyser: AnalyserNode, buffer: Float32Array<ArrayBuffer>) => {
@@ -842,6 +843,6 @@ export function openScreen() {
 export function shareScreen() {
   voice.startShare().catch((err: Error) => {
     if (err.name === 'NotAllowedError' || err.name === 'AbortError') return;
-    window.dispatchEvent(new CustomEvent('hq-error', { detail: err.message }));
+    notify({ tone: 'error', icon: '🖥️', title: 'Couldn’t share your screen', text: err.message, id: 'screen-share-error' });
   });
 }

@@ -46,7 +46,7 @@ into their monitor so you can type straight into their terminal.
 - **Hooks-driven status**: Claude Code hooks and its statusline tell the office what every agent is doing, when it needs
   permission and when a turn ends.
 - **Whiteboards**: Excalidraw boards the whole team draws on at once, with live cursors. Open one from the easel next
-  to the task board or Menu → Whiteboards; drawings are saved in the office.
+  to the task board, the meeting room's wall or Menu → Whiteboards; drawings are saved in the office.
 - **Task board**: the whiteboard holds To do / In progress / Review / Done. Assign tasks yourself or turn on
   auto-dispatch so idle agents on a floor pick them up.
 - **Isolated work**: each task runs in its own git worktree on an `hq/<agent>-<task>` branch. Marking a task done
@@ -74,8 +74,9 @@ into their monitor so you can type straight into their terminal.
 - **Voice chat**: talk to the players near your avatar (volume fades with distance, nobody hears you from another
   floor) or switch to the company-wide channel. Mic off by default, push-to-talk on `V`, device selection, per-player
   volume and mute, and a ring on whoever is talking.
-- **Meeting room**: every floor has one, with a table and a big wall screen. Walk in (or click *Join meeting*) to be in
-  the room's voice channel; share your screen and it plays on the wall and full size for everyone in the meeting.
+- **Meeting room**: every floor has one, with a table, a big wall screen and a whiteboard on the wall. Walk in (or click
+  *Join meeting*) to be in the room's voice channel; share your screen and it plays on the wall and full size for
+  everyone in the meeting.
 - **Desktop app**: runs as an Electron app by default; a browser version is available too.
 
 ## Screenshots

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { Floor, ID, Snapshot } from '@agent-hq/protocol';
 import { client } from '../api.ts';
-import { floorSpot } from '../whiteboards.ts';
+import { floorSpot, meetingSpot } from '../whiteboards.ts';
 import { CameraFly, FirstPersonControls, IsoControls, type CameraMode } from './Controls.tsx';
 import { findInteractable } from './interact.ts';
 import { HtmlLayer, LabelScale } from './Label.tsx';
@@ -109,7 +109,16 @@ export function OfficeScene(props: {
   const meeting = useMemo(() => meetingRoom(plan), [plan]);
   // The drawing whiteboard's easel, by the task board.
   const easel = useMemo(() => easelPlacement(plan), [plan]);
-  const solid = useMemo(() => [...colliders(plan, floor.theme), whiteboardCollider(easel.position, easel.rotation)], [plan, floor.theme, easel]);
+  const solid = useMemo(() => {
+    // The meeting room's wall whiteboard sticks out of the partition a little (frame and marker tray).
+    const anchor = meeting.whiteboardAnchor;
+    const wallBoard = toWorld([anchor.position[0], 0, anchor.position[2]], anchor.rotation, [0, 0, 0.05]);
+    return [
+      ...colliders(plan, floor.theme),
+      whiteboardCollider(easel.position, easel.rotation),
+      whiteboardCollider(wallBoard, anchor.rotation, anchor.width, 'wall'),
+    ];
+  }, [plan, floor.theme, easel, meeting]);
   const agents = world.agents.filter((a) => a.floorId === floor.id && a.kind !== 'repo').sort((a, b) => a.createdAt - b.createdAt);
   // Repo agents (.claude/agents of this floor's projects) live on the balcony. Every floor has one, crew or not.
   const crew = world.agents.filter((a) => a.floorId === floor.id && a.kind === 'repo').sort((a, b) => a.createdAt - b.createdAt);
@@ -195,7 +204,23 @@ export function OfficeScene(props: {
             unread={world.mail.filter((m) => !m.read).length + world.playerMail.unread}
             balcony={balcony}
           />
-          <MeetingRoom world={world} floor={floor} layout={meeting} cutaway={props.mode === 'iso'} />
+          <MeetingRoom
+            world={world}
+            floor={floor}
+            layout={meeting}
+            cutaway={props.mode === 'iso'}
+            whiteboard={
+              // Mounted in the anchor's group (centered on the spot, facing into the room), back against the partition.
+              <WhiteboardStand
+                variant="wall"
+                position={[0, 0, -0.04]}
+                elevation={0}
+                size={[meeting.whiteboardAnchor.width, meeting.whiteboardAnchor.height]}
+                spot={meetingSpot(floor.id)}
+                newBoardName={`${floor.name} meeting notes`}
+              />
+            }
+          />
           <WhiteboardStand position={easel.position} rotation={easel.rotation} spot={floorSpot(floor.id)} newBoardName={`${floor.name} whiteboard`} />
           <Balcony
             layout={balcony}
