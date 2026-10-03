@@ -382,13 +382,14 @@ export type ServerEvent =
   | { type: 'terminal_exit'; code: number | null }
   /** Raw output of an agent's Claude Code terminal; sent to clients that opened it. */
   | { type: 'agent_terminal_output'; agentId: ID; data: string }
-  | TycoonEvent;
+  | TycoonEvent
+  | WhiteboardEvent;
 
 // ---------------------------------------------------------------- commands (client -> server)
 
 type AgentEditable = 'name' | 'role' | 'model' | 'instructions' | 'permissionMode' | 'floorId' | 'isManager' | 'integrations' | 'appearance';
 
-export interface Commands extends HostCommands {
+export interface Commands extends HostCommands, WhiteboardCommands {
   create_building: { args: { name: string; kind: BuildingKind; color?: string }; result: Building };
   update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color'>> }; result: Building };
   remove_building: { args: { id: ID }; result: null };
@@ -707,3 +708,110 @@ export interface LobbyMessage {
   type: 'lobby';
   offices: OfficeInfo[];
 }
+
+// ================================================================ whiteboards
+// Collaborative drawing boards (Excalidraw) per office, separate from the
+// task board. Boards are stored on the host; players who open one subscribe
+// to its element changes and cursors. Elements are Excalidraw elements: the
+// host only relies on `id`, `version`, `versionNonce` and `isDeleted`, and
+// keeps whichever copy wins Excalidraw's reconciliation (higher version; on a
+// tie, the lower versionNonce). Hooked into the types above through
+// `Commands extends WhiteboardCommands` and `ServerEvent | WhiteboardEvent`.
+
+export interface WhiteboardInfo {
+  id: ID;
+  name: string;
+  createdBy: ID;
+  createdAt: number;
+  /** Last element change. */
+  updatedAt: number;
+  /**
+   * Where the board hangs in the 3D world, e.g. `floor:<floorId>` (the easel
+   * by the task board) or a meeting room's wall. One board per spot; null =
+   * only listed in the Whiteboards menu.
+   */
+  spot: string | null;
+  /** Bumped whenever the thumbnail changes; 0 = none yet (fetch it with whiteboard_thumbnail). */
+  thumbnailVersion: number;
+  /** Players who have the board open right now. */
+  viewers: ID[];
+}
+
+/** An Excalidraw element, opaque to the host apart from these fields. */
+export interface WhiteboardElement {
+  id: string;
+  version: number;
+  versionNonce: number;
+  isDeleted?: boolean;
+  [key: string]: unknown;
+}
+
+/** An Excalidraw binary file (a pasted image), stored on the host apart from the elements. */
+export interface WhiteboardFile {
+  id: string;
+  mimeType: string;
+  dataURL: string;
+  created: number;
+}
+
+export interface WhiteboardPointer {
+  x: number;
+  y: number;
+  tool: 'pointer' | 'laser';
+}
+
+export type WhiteboardEvent =
+  | { type: 'whiteboard'; whiteboard: WhiteboardInfo }
+  | { type: 'whiteboard_removed'; id: ID }
+  /** Element changes another player made (only sent to players who have the board open). */
+  | { type: 'whiteboard_elements'; boardId: ID; elements: WhiteboardElement[] }
+  /** New files were stored for the board; fetch the ones you need with whiteboard_files. */
+  | { type: 'whiteboard_files_added'; boardId: ID; fileIds: string[] }
+  /** A player's cursor on the board; `peerId` tells apart several tabs of one player. null pointer = left. */
+  | {
+      type: 'whiteboard_cursor';
+      boardId: ID;
+      peerId: string;
+      userId: ID;
+      pointer: WhiteboardPointer | null;
+      button: 'up' | 'down';
+      selectedElementIds: string[];
+    };
+
+export interface WhiteboardCommands {
+  whiteboard_list: { args: Record<string, never>; result: WhiteboardInfo[] };
+  /** `spot`: hang it there right away (taking the spot from any other board). */
+  whiteboard_create: { args: { name: string; spot?: string | null }; result: WhiteboardInfo };
+  /** Renaming: its creator or the owner. Hanging (spot): anyone. */
+  whiteboard_update: { args: { id: ID; patch: { name?: string; spot?: string | null } }; result: WhiteboardInfo };
+  /** Its creator or the owner. */
+  whiteboard_delete: { args: { id: ID }; result: null };
+  /**
+   * Subscribes this connection to the board's changes and cursors (until
+   * whiteboard_close or disconnect). Returns every element (deleted ones too)
+   * and the files the live elements use.
+   */
+  whiteboard_open: {
+    args: { id: ID };
+    result: { board: WhiteboardInfo; elements: WhiteboardElement[]; files: WhiteboardFile[]; peerId: string };
+  };
+  whiteboard_close: { args: { id: ID }; result: null };
+  /**
+   * Your element changes. The host keeps the winners, relays them to the
+   * other viewers and answers with its own copy of the elements where it kept
+   * another version than yours (`stale`), so you converge too.
+   */
+  whiteboard_push: { args: { id: ID; elements: WhiteboardElement[] }; result: { stale: WhiteboardElement[] } };
+  whiteboard_cursor: {
+    args: { id: ID; pointer: WhiteboardPointer | null; button: 'up' | 'down'; selectedElementIds?: string[] };
+    result: null;
+  };
+  /** Stores pasted images (size limits apply); ids already stored are kept as they are. */
+  whiteboard_add_files: { args: { id: ID; files: WhiteboardFile[] }; result: { stored: string[] } };
+  whiteboard_files: { args: { id: ID; fileIds: string[] }; result: WhiteboardFile[] };
+  /** A small PNG of the board (data URL) for its 3D object and the list; null clears it. */
+  whiteboard_set_thumbnail: { args: { id: ID; dataUrl: string | null }; result: null };
+  whiteboard_thumbnail: { args: { id: ID }; result: { version: number; dataUrl: string | null } };
+}
+
+export type WhiteboardCommandName = keyof WhiteboardCommands;

@@ -45,6 +45,8 @@ into their monitor so you can type straight into their terminal.
   their actual Claude Code session (xterm.js on a PTY). Type to them, approve prompts, interrupt with Esc.
 - **Hooks-driven status**: Claude Code hooks and its statusline tell the office what every agent is doing, when it needs
   permission and when a turn ends.
+- **Whiteboards**: Excalidraw boards the whole team draws on at once, with live cursors. Open one from the easel next
+  to the task board or Menu → Whiteboards; drawings are saved in the office.
 - **Task board**: the whiteboard holds To do / In progress / Review / Done. Assign tasks yourself or turn on
   auto-dispatch so idle agents on a floor pick them up.
 - **Isolated work**: each task runs in its own git worktree on an `hq/<agent>-<task>` branch. Marking a task done

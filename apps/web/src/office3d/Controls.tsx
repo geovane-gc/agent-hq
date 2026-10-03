@@ -20,7 +20,7 @@ const MAX_MOUSE_DELTA = 220;
 /** Keys typed into inputs or terminals must never move the camera. */
 function isTyping(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null;
-  return !!t?.closest?.('input, textarea, select, [contenteditable="true"], .xterm');
+  return !!t?.closest?.('input, textarea, select, [contenteditable="true"], .xterm, [data-captures-keys]');
 }
 
 function usePressedKeys() {

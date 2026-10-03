@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { Floor, ID, Snapshot } from '@agent-hq/protocol';
 import { client } from '../api.ts';
+import { floorSpot } from '../whiteboards.ts';
 import { CameraFly, FirstPersonControls, IsoControls, type CameraMode } from './Controls.tsx';
 import { findInteractable } from './interact.ts';
 import { HtmlLayer, LabelScale } from './Label.tsx';
@@ -11,6 +12,7 @@ import { Balcony } from './Balcony.tsx';
 import { balconyLayout, colliders, fixtures, floorPlan, toWorld, type FloorPlan, type Rect, type Vec3 } from './layout.ts';
 import { Players } from './Players.tsx';
 import { Room } from './Room.tsx';
+import { easelPlacement, whiteboardCollider, WhiteboardStand } from './WhiteboardStand.tsx';
 import { Workstation } from './Workstation.tsx';
 
 /** Camera pose that fills the view with an agent's monitor (workstation-local coordinates). */
@@ -101,7 +103,9 @@ export function OfficeScene(props: {
   const { world, floor } = props;
   const plan = useMemo(() => floorPlan(floor.desks), [floor.desks]);
   const fx = useMemo(() => fixtures(plan), [plan]);
-  const solid = useMemo(() => colliders(plan, floor.theme), [plan, floor.theme]);
+  // The drawing whiteboard's easel, by the task board.
+  const easel = useMemo(() => easelPlacement(plan), [plan]);
+  const solid = useMemo(() => [...colliders(plan, floor.theme), whiteboardCollider(easel.position, easel.rotation)], [plan, floor.theme, easel]);
   const agents = world.agents.filter((a) => a.floorId === floor.id && a.kind !== 'repo').sort((a, b) => a.createdAt - b.createdAt);
   // Repo agents (.claude/agents of this floor's projects) live on the balcony.
   const crew = world.agents.filter((a) => a.floorId === floor.id && a.kind === 'repo').sort((a, b) => a.createdAt - b.createdAt);
@@ -187,6 +191,7 @@ export function OfficeScene(props: {
             unread={world.mail.filter((m) => !m.read).length}
             balcony={balcony}
           />
+          <WhiteboardStand position={easel.position} rotation={easel.rotation} spot={floorSpot(floor.id)} newBoardName={`${floor.name} whiteboard`} />
           {balcony && (
             <Balcony
               layout={balcony}
