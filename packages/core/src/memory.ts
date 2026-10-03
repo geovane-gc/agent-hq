@@ -46,7 +46,7 @@ export function buildSystemPrompt(opts: {
   }
 
   const board = agent.isManager
-    ? 'You are a manager. Use the agent-hq tools (list_team, list_projects, list_tasks, create_task, assign_task) to break work into well-scoped tasks and delegate them to teammates whose roles fit. Write each brief so it can be done without further context. Do work yourself only when delegating would be slower.'
+    ? 'You are a coordinator. Use the agent-hq tools (list_team, list_projects, list_tasks, create_task, assign_task) to break work into well-scoped tasks and delegate them to teammates whose roles fit. Write each brief so it can be done without further context. Do work yourself only when delegating would be slower.'
     : 'You can inspect the office board with the agent-hq tools (list_team, list_projects, list_tasks).';
 
   return [

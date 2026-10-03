@@ -1,6 +1,19 @@
+<div align="center">
+
 # 🏢 Agent HQ
 
 **A 3D virtual office where AI agents are your employees.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node.js >= 22.18](https://img.shields.io/badge/node-%E2%89%A5%2022.18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![Platform: Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#requirements)
+[![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-D97757?logo=claude&logoColor=white)](https://claude.com/claude-code)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+[Features](#features) · [Screenshots](#screenshots) · [Quick start](#quick-start) · [How to play](#how-to-play) ·
+[Multiplayer](#multiplayer) · [Architecture](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)
+
+</div>
 
 Instead of juggling terminals, you run a company. Build a campus of studios, hire AI developers, hand out tasks on a
 whiteboard and walk up to anyone's desk to see exactly what they're doing. Every employee is a real
@@ -36,7 +49,7 @@ into their monitor so you can type straight into their terminal.
   auto-dispatch so idle agents on a floor pick them up.
 - **Isolated work**: each task runs in its own git worktree on an `hq/<agent>-<task>` branch. Marking a task done
   cleans up the worktree and keeps the branch for you to merge.
-- **Managers**: hire an agent as a manager and it plans work and delegates tasks to teammates through the built-in
+- **Coordinators**: hire an agent as a coordinator and it plans work and delegates tasks to teammates through the built-in
   `agent-hq` MCP tools.
 - **Persistent memory**: each agent keeps notes per project that survive tasks and restarts.
 - **Approvals or auto mode**: per agent, from "ask me before sensitive actions" to Claude Code's auto mode.
@@ -62,7 +75,7 @@ into their monitor so you can type straight into their terminal.
 |---|---|
 | ![Campus](docs/screenshots/campus.png) **Campus**: one tower per studio; lit windows show who's working. | ![First person](docs/screenshots/first-person.png) **Walk mode**: first person, with collisions and a crosshair. |
 | ![Agent terminal](docs/screenshots/agent-terminal.png) **An agent's monitor**: the real Claude Code session, here asking to create a file. | ![Task board](docs/screenshots/task-board.png) **Task board**: worktree branches, assignees and review. |
-| ![Recruit](docs/screenshots/recruit-agent.png) **Recruiting**: role, model, permissions, look, manager and integrations. | ![Usage](docs/screenshots/usage-report.png) **Usage report**: per agent, project and day. |
+| ![Recruit](docs/screenshots/recruit-agent.png) **Recruiting**: role, model, permissions, look, coordinator and integrations. | ![Usage](docs/screenshots/usage-report.png) **Usage report**: per agent, project and day. |
 | ![Team](docs/screenshots/team-invites.png) **Team**: players and invite links. | |
 
 ## Requirements
@@ -103,9 +116,9 @@ The `?token=…` in the link makes you the office owner. Keep it private.
 ## How to play
 
 1. **Pick a floor.** From the campus, click a building's storey, or use the elevator and the directory in the office.
-2. **Add a project.** A project is a GitHub repository (`+ Project`): a local clone whose `origin` is on GitHub, or a
-   new repository created from the game with `gh`. Tasks always belong to a project.
-3. **Recruit.** Click an empty desk. Choose a name, role, model, permission mode and look; tick *Manager* if this agent
+2. **Add a project.** A project is a GitHub repository (Menu → Add a project): a local clone whose `origin` is on
+   GitHub, or a new repository created from the game with `gh`. Tasks always belong to a project.
+3. **Recruit.** Click an empty desk. Choose a name, role, model, permission mode and look; tick *Coordinator* if this agent
    should plan and delegate; pick optional integrations.
 4. **Give work.** Open the board (the whiteboard, or the HUD button) and add tasks, or click an agent's computer and use
    **＋ Task**. With auto-dispatch on, idle agents pick up unassigned tasks from their floor's projects.
@@ -133,8 +146,12 @@ Overview: drag to rotate, right-drag or `W A S D` to pan, wheel to zoom.
    Projects with a git `origin` are cloned automatically when `--repo` is omitted. Remote agents push their branches
    to `origin` so the team can review them.
 
-Each agent runs on its owner's machine and subscription, and only its owner can type into its terminal or approve its
-actions. Everyone else can watch.
+The building owner is the **boss**; everyone invited is a **manager**. Each agent runs on its owner's machine, on one of
+their Claude accounts (connect several in **Settings → Claude accounts**; each employee's monitor shows the account's
+email, plan and player, and lets its owner switch). Claude accounts are personal: only the player whose account runs an
+agent can type into its terminal or approve its actions. Everyone else can watch, or use **⇄ Take over** on the monitor
+to move the task, its branch (committed and pushed to `origin`) and a summary of the work so far onto their own machine
+and account.
 
 ## Configuration
 
@@ -181,6 +198,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together
 - Agent HQ never handles Claude credentials. Each player's agents use that player's own Claude Code login.
 - Folder trust: Claude Code asks whether to trust new folders. Agent HQ answers "yes" only for the worktrees and scratch
   folders it creates from repositories you added.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get set up, and note that
+this project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

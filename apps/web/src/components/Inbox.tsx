@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { ID, Mail, Snapshot } from '@agent-hq/protocol';
 import { client, run } from '../api.ts';
 import { Modal } from './Modal.tsx';
@@ -180,11 +180,18 @@ function Inbox(props: { world: Snapshot; initialMailId?: ID; onOpenAgent: (id: I
 }
 
 /** The computer in the boss room: everyone's own inbox, and the owner's terminal. */
-export function BossComputer(props: { world: Snapshot; initialMailId?: ID; onClose: () => void; onOpenAgent: (id: ID) => void }) {
-  const [tab, setTab] = useState<'inbox' | 'terminal'>('inbox');
+export function BossComputer(props: {
+  world: Snapshot;
+  initialMailId?: ID;
+  initialTab?: 'inbox' | 'terminal';
+  onClose: () => void;
+  onOpenAgent: (id: ID) => void;
+}) {
+  const [tab, setTab] = useState<'inbox' | 'terminal'>(props.initialTab === 'terminal' && props.world.terminalAvailable ? 'terminal' : 'inbox');
   const unread = props.world.mail.filter((m) => !m.read).length;
+  const subtitle = tab === 'inbox' ? 'Reports from the balcony crew. Reply to keep the conversation going.' : 'Your private shell on the host';
   return (
-    <Modal title="👑 Boss computer" onClose={props.onClose} wide>
+    <Modal title="👑 Boss computer" subtitle={subtitle} onClose={props.onClose} wide>
       <div className="tabs inline">
         <button className={tab === 'inbox' ? 'active' : ''} onClick={() => setTab('inbox')}>📧 Inbox{unread ? ` (${unread})` : ''}</button>
         {props.world.terminalAvailable && <button className={tab === 'terminal' ? 'active' : ''} onClick={() => setTab('terminal')}>⌨️ Terminal</button>}
@@ -193,32 +200,5 @@ export function BossComputer(props: { world: Snapshot; initialMailId?: ID; onClo
         ? <Inbox world={props.world} initialMailId={props.initialMailId} onOpenAgent={(id) => { props.onClose(); props.onOpenAgent(id); }} />
         : <BossTerminal embedded onClose={props.onClose} />}
     </Modal>
-  );
-}
-
-/** "You've got mail": a nudge when a report arrives, wherever you are. */
-export function MailAlerts({ world, onOpen }: { world: Snapshot; onOpen: (mailId: ID) => void }) {
-  const seen = useRef(new Set(world.mail.map((m) => m.id)));
-  const [fresh, setFresh] = useState<Mail[]>([]);
-  const timers = useRef<number[]>([]);
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
-  useEffect(() => {
-    const arrived = world.mail.filter((m) => !seen.current.has(m.id));
-    if (!arrived.length) return;
-    for (const m of arrived) seen.current.add(m.id);
-    setFresh((list) => [...arrived.filter((m) => !m.read), ...list].slice(0, 3));
-    const ids = arrived.map((m) => m.id);
-    timers.current.push(window.setTimeout(() => setFresh((list) => list.filter((m) => !ids.includes(m.id))), 12000));
-  }, [world.mail]);
-  const visible = fresh.filter((m) => world.mail.some((x) => x.id === m.id && !x.read));
-  if (!visible.length) return null;
-  return (
-    <div className="mail-alerts">
-      {visible.map((m) => (
-        <button key={m.id} className="mail-alert" onClick={() => { setFresh((l) => l.filter((x) => x.id !== m.id)); onOpen(m.id); }}>
-          📧 {world.agents.find((a) => a.id === m.fromAgentId)?.name ?? 'An agent'} sent you a report — open inbox
-        </button>
-      ))}
-    </div>
   );
 }

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import type {
   Agent,
   Building,
+  ClaudeAccount,
   Floor,
   FloorTheme,
   ID,
@@ -25,6 +26,7 @@ interface EntityKinds {
   project: Project;
   agent: Agent;
   task: Task;
+  account: ClaudeAccount;
 }
 
 type Kind = keyof EntityKinds;
@@ -49,6 +51,8 @@ const normalize: { [K in Kind]?: (e: any) => EntityKinds[K] } = {
     color: PALETTE[0],
     appearance: { skin: '#e0ac69', hair: '#2c1b10', shirt: u.color ?? PALETTE[0], hairStyle: 'short' },
     ...u,
+    // Players other than the boss were called members before they became managers.
+    role: u.role === 'owner' ? 'owner' : 'manager',
     online: false,
     runnerOnline: false,
   }),
@@ -84,6 +88,8 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
     const load = <K extends Kind>(kind: K) =>
       new Map(db.loadEntities<EntityKinds[K]>(kind).map((e) => {
         const n = normalize[kind]?.(e) ?? e;
+        // Persist role renames so stored data matches the current model.
+        if (kind === 'user' && (e as User).role !== (n as User).role) db.putEntity(kind, n.id, n);
         return [n.id, n] as const;
       }));
     this.maps = {
@@ -94,6 +100,7 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
       project: load('project'),
       agent: load('agent'),
       task: load('task'),
+      account: load('account'),
     };
     const saved = db.getKv<Partial<Settings>>('settings') ?? {};
     this.settings = { ...DEFAULT_SETTINGS, ...saved, integrations: saved.integrations ?? DEFAULT_INTEGRATIONS };
@@ -129,10 +136,10 @@ export class Store extends EventEmitter<{ event: [ServerEvent] }> {
     return this.put(kind, next);
   }
 
-  remove(kind: 'building' | 'floor' | 'project' | 'agent' | 'task' | 'invite' | 'user', id: ID) {
+  remove(kind: 'building' | 'floor' | 'project' | 'agent' | 'task' | 'invite' | 'user' | 'account', id: ID) {
     this.maps[kind].delete(id);
     this.db.deleteEntity(kind, id);
-    if (kind === 'building' || kind === 'floor' || kind === 'project' || kind === 'agent' || kind === 'task') {
+    if (kind === 'building' || kind === 'floor' || kind === 'project' || kind === 'agent' || kind === 'task' || kind === 'account') {
       this.emit('event', { type: `${kind}_removed`, id });
     }
   }

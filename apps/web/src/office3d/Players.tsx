@@ -34,7 +34,7 @@ function Walker({ user, position, rotation }: { user: User; position: Vec3; rota
 function NameTag({ user, height }: { user: User; height: number }) {
   return (
     <Label position={[0, height, 0]} center distanceFactor={14} zIndexRange={[20, 0]}>
-      <span className="tag player" style={{ borderColor: user.color }}>
+      <span className="tag player" style={{ borderColor: user.color }} title={user.role === 'owner' ? 'Boss' : 'Manager'}>
         <span className="dot" style={{ background: user.color }} /> {user.name}{user.role === 'owner' ? ' 👑' : ''}
       </span>
     </Label>

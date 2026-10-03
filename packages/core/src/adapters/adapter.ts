@@ -11,6 +11,8 @@ export interface SessionOptions {
   systemPrompt: string;
   /** Resume an earlier conversation instead of starting a new one. */
   resumeSessionId: string | null;
+  /** Claude Code config dir (CLAUDE_CONFIG_DIR) of the account to run on; null = the default login. */
+  configDir: string | null;
   /** Extra directories the agent may access (e.g. its memory folder). */
   addDirs: string[];
   /** MCP servers to load, as a Claude Code `mcpServers` map. */

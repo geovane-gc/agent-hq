@@ -68,6 +68,7 @@ export async function join(argv: string[]) {
   let ws: WebSocket;
   let retry = 1000;
   let runner: LocalRunner | null = null;
+  const early: RunnerOp[] = [];
 
   const send = (msg: RunnerMessage) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
 
@@ -100,14 +101,34 @@ export async function join(argv: string[]) {
         send({ type: 'runner_event', sessionKey: op.requestKey, event: { type: 'exit', code: 0, error: ok ? null : 'not removed' } });
         return;
       }
-      case 'scan_agents': {
+      // Claude accounts: logins happen here, on your machine; the host only sees email and plan.
+      case 'account_status': return reply(op.requestKey, () => runner!.accountStatus(op.configDirs));
+      case 'account_remove': return reply(op.requestKey, () => runner!.accountRemove(op.configDir));
+      case 'account_login': {
+        const key = op.requestKey;
         try {
-          send({ type: 'runner_reply', requestKey: op.requestKey, ok: true, result: await runner!.scanAgents(op.project), error: null });
+          sessions.set(key, runner!.accountLogin(key, op.configDir, (event) => {
+            if (event.type === 'exit') sessions.delete(key);
+            send({ type: 'runner_event', sessionKey: key, event });
+          }));
+          console.log('🔑 Claude login started (finish it in the game).');
         } catch (err) {
-          send({ type: 'runner_reply', requestKey: op.requestKey, ok: false, result: null, error: (err as Error).message });
+          send({ type: 'runner_event', sessionKey: key, event: { type: 'exit', code: null, error: (err as Error).message } });
         }
         return;
       }
+      case 'scan_agents': return reply(op.requestKey, () => runner!.scanAgents(op.project));
+      case 'handoff':
+        console.log(`⇄ Handing off "${op.task.title}"`);
+        return reply(op.requestKey, () => runner!.handoff(op.project, op.task));
+    }
+  };
+
+  const reply = async (requestKey: string, fn: () => Promise<unknown>) => {
+    try {
+      send({ type: 'runner_reply', requestKey, ok: true, result: (await fn()) ?? null, error: null });
+    } catch (err) {
+      send({ type: 'runner_reply', requestKey, ok: false, result: null, error: (err as Error).message });
     }
   };
 
@@ -124,8 +145,11 @@ export async function join(argv: string[]) {
         runner ??= new LocalRunner({
           userId: msg.snapshot.you.id, dataDir: opts.dataDir, adapters: [claude], resolveRepo, remote: true, hqUrl: opts.url,
         });
+        for (const op of early.splice(0)) handle(op).catch((err) => console.error(err));
       } else if (msg.type === 'runner_op') {
-        handle((msg as HostToRunner).op).catch((err) => console.error(err));
+        // The host may send ops (e.g. account checks) before the snapshot that sets up the runner.
+        if (!runner) early.push((msg as HostToRunner).op);
+        else handle((msg as HostToRunner).op).catch((err) => console.error(err));
       }
     };
     ws.onclose = (ev) => {

@@ -117,7 +117,7 @@ class ClaudeCodeSession implements AgentSession {
     for (const dir of opts.addDirs) args.push('--add-dir', dir);
     if (Object.keys(opts.mcpServers).length) args.push('--mcp-config', JSON.stringify({ mcpServers: opts.mcpServers }));
 
-    this.child = spawn(binary, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: cleanEnv() });
+    this.child = spawn(binary, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: cleanEnv(opts.configDir ? { CLAUDE_CONFIG_DIR: opts.configDir } : {}) });
 
     let stderr = '';
     this.child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });

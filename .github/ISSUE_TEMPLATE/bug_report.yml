@@ -1,0 +1,118 @@
+name: Bug report
+description: Something in Agent HQ doesn't work as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+        **Found a security issue?** Please don't file it here. Follow [SECURITY.md](https://github.com/geovane-gc/agent-hq/blob/main/SECURITY.md) instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: When I click an agent's computer, the camera flies in but the terminal stays blank.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Recruit an agent on 0F
+        2. Assign it a task from the board
+        3. Click its computer
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Agent HQ is affected?
+      options:
+        - 3D office / campus / cameras
+        - Agent terminal (Claude Code session)
+        - Agent status / hooks
+        - Task board / auto-dispatch / worktrees
+        - Managers / HQ MCP tools
+        - Integrations (MCP servers)
+        - Usage report / HUD meters
+        - Boss terminal
+        - Multiplayer / invites / runners
+        - Desktop app (Electron)
+        - Install / setup
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: How do you run Agent HQ?
+      options:
+        - Desktop app (npm run dev / npm start)
+        - Browser (npm run dev:web / npm run start:web)
+        - As a runner joining someone's office (npm run join)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`
+      placeholder: v22.18.0
+    validations:
+      required: true
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`
+    validations:
+      required: true
+
+  - type: input
+    id: agent-hq-version
+    attributes:
+      label: Agent HQ version or commit
+      description: The version in package.json, or the output of `git rev-parse --short HEAD`
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: |
+        Relevant output from the terminal running Agent HQ, the browser console, or a screenshot.
+        Please remove tokens (the `?token=…` link, `owner-token`, invite tokens) before posting.
+      render: shell
+    validations:
+      required: false

@@ -37,7 +37,7 @@ export function SummonModal(props: { world: Snapshot; agentId: ID; onClose: () =
 
   if (!free) {
     return (
-      <Modal title={`🚬 ${agent.name}`} onClose={props.onClose}>
+      <Modal title={`🚬 ${agent.name}`} subtitle="Repo agent on the balcony" onClose={props.onClose}>
         <div className="form">
           {about}
           <p className="callout">{agent.name} is working{boss ? ` for ${boss.name}` : ''} right now{agent.activity ? `: ${agent.activity}` : ''}. Try again when they're back on the balcony.</p>
@@ -53,6 +53,7 @@ export function SummonModal(props: { world: Snapshot; agentId: ID; onClose: () =
   return (
     <FormModal
       title={`🚬 Summon ${agent.name}`}
+      subtitle={`Repo agent from ${project?.name ?? 'this project'}'s .claude/agents`}
       submitLabel="Summon"
       onClose={props.onClose}
       onSubmit={(d) => client.request('invoke_repo_agent', { agentId: agent.id, prompt: String(d.get('prompt') ?? '').trim() })}

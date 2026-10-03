@@ -6,6 +6,7 @@ import type {
   Agent,
   Appearance,
   Approval,
+  ClaudeAccount,
   CommandName,
   Commands,
   HostToRunner,
@@ -14,14 +15,17 @@ import type {
   Presence,
   Project,
   RunnerSessionEvent,
+  ServerEvent,
   Snapshot,
   Task,
   TranscriptEntry,
   User,
 } from '@agent-hq/protocol';
+import { ACCOUNTS_DIR } from './accounts.ts';
 import type { Config } from './config.ts';
 import type { Db } from './db.ts';
-import { hasCommits, initRepo, originUrl } from './git.ts';
+import { hasCommits, initRepo, originUrl, type HandoffResult } from './git.ts';
+import { handoffPrompt } from './handoff.ts';
 import { createGithubRepo, githubStatus, isRepoRoot, requireGithubOrigin } from './github.ts';
 import { Mailbox } from './mailbox.ts';
 import { taskPrompt } from './memory.ts';
@@ -50,7 +54,12 @@ interface LiveSession {
   buffer: string;
   /** The agent's last message this turn: a repo agent's report. */
   lastText: string | null;
+  /** Whose Claude account the session runs on: the only player who may type into it. */
+  accountUserId: ID;
 }
+
+/** How often connected players' Claude logins are re-checked (email, plan, logged in). */
+const ACCOUNT_REFRESH_MS = 10 * 60_000;
 
 /** How much terminal output to keep per agent for late viewers. */
 const TERMINAL_HISTORY = 400_000;
@@ -120,6 +129,13 @@ export class Orchestrator {
   private readonly mailbox: Mailbox;
   /** Repo agents walking between the balcony and a hot desk. */
   private readonly walks = new Map<ID, NodeJS.Timeout>();
+  /** Events for a single player (e.g. their account login terminal), for the server to deliver. */
+  readonly userEvents = new EventEmitter<{ event: [ID, ServerEvent] }>();
+  /** Running `claude auth login` terminals, by account id. */
+  private readonly logins = new Map<ID, { session: RunnerSession; userId: ID }>();
+  /** In-flight account status checks, per player. */
+  private readonly refreshing = new Map<ID, Promise<ClaudeAccount[]>>();
+  private accountTimer: NodeJS.Timeout | null = null;
 
   constructor(store: Store, db: Db, config: Config, terminal: BossTerminal) {
     this.store = store;
@@ -178,6 +194,12 @@ export class Orchestrator {
         }
       }
     }
+    this.ensureDefaultAccount(owner.id);
+    this.refreshAccounts(owner.id).catch(() => {});
+    this.accountTimer = setInterval(() => {
+      for (const u of this.store.all('user')) if (this.runnerOf(u.id)) this.refreshAccounts(u.id).catch(() => {});
+    }, ACCOUNT_REFRESH_MS);
+    this.accountTimer.unref();
     this.dispatch();
     // Pick up agents added to (or removed from) the repositories meanwhile.
     for (const project of this.store.all('project')) {
@@ -188,6 +210,9 @@ export class Orchestrator {
   shutdown(): Promise<void> {
     for (const timer of this.walks.values()) clearTimeout(timer);
     this.terminal.dispose();
+    if (this.accountTimer) clearInterval(this.accountTimer);
+    for (const login of this.logins.values()) login.session.close().catch(() => {});
+    this.logins.clear();
     return Promise.all([...this.sessions.keys()].map((id) => this.endSession(id))).then(() => {});
   }
 
@@ -197,7 +222,7 @@ export class Orchestrator {
 
   // ------------------------------------------------------------------ auth & connections
 
-  /** Resolves a connection token: the owner's, an invite (member), or a live agent's MCP token. */
+  /** Resolves a connection token: the owner's, an invite (a manager), or a live agent's MCP token. */
   authenticate(token: string): Actor | null {
     const agentId = this.agentTokens.get(token);
     if (agentId) {
@@ -214,7 +239,7 @@ export class Orchestrator {
     const used = new Set(this.store.all('user').map((u) => u.color));
     const color = PALETTE.find((c) => !used.has(c)) ?? pick(PALETTE);
     const user = this.store.put('user', {
-      id: randomUUID(), name: invite.name, role: 'member', color, online: false, runnerOnline: false, appearance: randomAppearance(color),
+      id: randomUUID(), name: invite.name, role: 'manager', color, online: false, runnerOnline: false, appearance: randomAppearance(color),
     });
     this.store.patch('invite', invite.id, { usedBy: user.id });
     return { kind: 'user', user };
@@ -242,6 +267,8 @@ export class Orchestrator {
     for (const a of this.store.all('agent').filter(isStaff)) {
       if (a.ownerId === userId && a.status === 'offline') this.store.patch('agent', a.id, { status: 'idle' });
     }
+    this.ensureDefaultAccount(userId);
+    this.refreshAccounts(userId).catch(() => {});
     this.dispatch();
     return runner;
   }
@@ -258,11 +285,11 @@ export class Orchestrator {
   }
 
   private runnerFor(agent: Agent): Runner | null {
-    return this.runnerForUser(agent.ownerId);
+    return this.runnerOf(agent.ownerId);
   }
 
-  /** The machine that runs a player's agents: the host for the owner, their `join` runner for members. */
-  private runnerForUser(userId: ID): Runner | null {
+  /** The machine a player's agents and Claude logins run on, if connected. */
+  private runnerOf(userId: ID): Runner | null {
     if (userId === this.owner().id) return this.localRunner;
     return this.remoteRunners.get(userId) ?? null;
   }
@@ -270,12 +297,11 @@ export class Orchestrator {
   snapshot(actor: Actor): Snapshot {
     const you = actor.kind === 'user'
       ? actor.user
-      : { id: actor.agentId, name: this.store.get('agent', actor.agentId)?.name ?? 'agent', role: 'member' as const, color: '#888', online: true, runnerOnline: true, appearance: randomAppearance('#888888') };
+      : { id: actor.agentId, name: this.store.get('agent', actor.agentId)?.name ?? 'agent', role: 'manager' as const, color: '#888', online: true, runnerOnline: true, appearance: randomAppearance('#888888') };
     return {
       you,
       users: this.store.all('user'),
-      // Claude accounts are not implemented on the host yet.
-      accounts: [],
+      accounts: this.store.all('account'),
       mail: actor.kind === 'user' ? this.mailbox.inbox(you.id) : [],
       buildings: this.store.all('building'),
       floors: this.store.all('floor'),
@@ -297,7 +323,7 @@ export class Orchestrator {
     if (!handler) throw new Error(`Unknown command: ${command}`);
     let user: User;
     if (actor.kind === 'agent') {
-      if (!MANAGER_COMMANDS.has(command) || !actor.manager) throw new Error('Only manager agents can change the board');
+      if (!MANAGER_COMMANDS.has(command) || !actor.manager) throw new Error('Only coordinator agents can change the board');
       user = this.owner();
     } else {
       user = actor.user;
@@ -314,6 +340,117 @@ export class Orchestrator {
       throw new Error(`${agent.name} works for ${owner?.name ?? 'someone else'}; only they can do that`);
     }
     return agent;
+  }
+
+  // ------------------------------------------------------------------ Claude accounts
+
+  /** The account an agent's sessions run on: the one it picked, or its owner's default login. */
+  private accountOf(agent: Agent): ClaudeAccount | undefined {
+    const picked = agent.accountId ? this.store.get('account', agent.accountId) : undefined;
+    if (picked && picked.userId === agent.ownerId) return picked;
+    return this.store.all('account').find((a) => a.userId === agent.ownerId && a.configDir === null);
+  }
+
+  /**
+   * Hard rule: Claude accounts are individual, so only the player whose
+   * account runs an agent's session may type into it (terminal keystrokes,
+   * messages, interrupts, approvals). Everyone else watches, or takes over.
+   */
+  private driver(agentId: ID, user: User): Agent {
+    const agent = this.store.require('agent', agentId);
+    if (!this.canDrive(agent, user)) {
+      const live = this.sessions.get(agentId);
+      const who = this.store.get('user', live?.accountUserId ?? this.accountOf(agent)?.userId ?? agent.ownerId);
+      throw new Error(`${agent.name} runs on ${who?.name ?? 'someone else'}'s Claude account, so only they can type into it. Use "Take over" to continue this work on your own account.`);
+    }
+    return agent;
+  }
+
+  private canDrive(agent: Agent, user: User): boolean {
+    const accountUser = this.accountOf(agent)?.userId ?? agent.ownerId;
+    const live = this.sessions.get(agent.id);
+    return agent.ownerId === user.id && accountUser === user.id && (!live || live.accountUserId === user.id);
+  }
+
+  /** Every player has a record for their machine's default login (configDir null). */
+  private ensureDefaultAccount(userId: ID) {
+    if (this.store.all('account').some((a) => a.userId === userId && a.configDir === null)) return;
+    this.store.put('account', {
+      id: randomUUID(), userId, label: 'Default login', configDir: null, email: null, plan: null, loggedIn: false, checkedAt: 0,
+    });
+  }
+
+  /** One of `userId`'s logged-in accounts (null: their default login). */
+  private pickAccount(userId: ID, accountId: ID | null | undefined): ClaudeAccount | null {
+    if (!accountId) return null;
+    const account = this.store.require('account', accountId);
+    if (account.userId !== userId) throw new Error('That Claude account belongs to another player');
+    if (account.configDir === null) return null;
+    if (!account.loggedIn) throw new Error(`The account "${account.label}" is not logged in`);
+    return account;
+  }
+
+  /** Re-reads `claude auth status` for a player's accounts on their machine. */
+  private refreshAccounts(userId: ID): Promise<ClaudeAccount[]> {
+    const mine = () => this.store.all('account').filter((a) => a.userId === userId);
+    const runner = this.runnerOf(userId);
+    if (!runner) return Promise.resolve(mine());
+    const inFlight = this.refreshing.get(userId);
+    if (inFlight) return inFlight;
+    const accounts = mine();
+    const job = runner.accountStatus(accounts.map((a) => a.configDir)).then((statuses) => {
+      accounts.forEach((a, i) => {
+        const s = statuses[i];
+        if (!s || !this.store.get('account', a.id)) return;
+        // Unknown status (e.g. the CLI failed): keep what we knew.
+        this.store.patch('account', a.id, s.error ? { checkedAt: Date.now() } : { loggedIn: s.loggedIn, email: s.email, plan: s.plan, checkedAt: Date.now() });
+      });
+      return mine();
+    }).finally(() => this.refreshing.delete(userId));
+    this.refreshing.set(userId, job);
+    return job;
+  }
+
+  /** Runs `claude auth login` for the account on its owner's machine; output goes to the owner only. */
+  private startLogin(account: ClaudeAccount, runner: Runner) {
+    const { id, userId } = account;
+    this.logins.get(id)?.session.close().catch(() => {});
+    const output = (data: string) => this.userEvents.emit('event', userId, { type: 'account_login_output', accountId: id, data });
+    const session: RunnerSession = runner.accountLogin(randomUUID(), account.configDir!, (e) => {
+      if (e.type === 'pty') output(e.data);
+      if (e.type !== 'exit') return;
+      if (this.logins.get(id)?.session === session) this.logins.delete(id);
+      output(`\r\n\x1b[90m[login ${e.error ? `ended: ${e.error}` : 'finished'}]\x1b[0m\r\n`);
+      this.refreshAccounts(userId).catch(() => {});
+    });
+    this.logins.set(id, { session, userId });
+  }
+
+  /** Points an agent at another of its owner's accounts; a running session restarts (resuming) on it. */
+  private async applyAccount(agent: Agent, accountId: ID | null): Promise<Agent> {
+    if (agent.accountId === accountId) return agent;
+    const next = this.store.patch('agent', agent.id, { accountId });
+    const live = this.sessions.get(agent.id);
+    if (!live) return next;
+    const wasWorking = next.status === 'working' || next.status === 'awaiting_approval';
+    // Held until the new session starts, so the computer reopens onto it.
+    this.starting.add(agent.id);
+    try {
+      await this.endSession(agent.id);
+    } finally {
+      this.starting.delete(agent.id);
+    }
+    const task = live.taskId ? this.store.get('task', live.taskId) : undefined;
+    const label = this.accountOf(next)?.email ?? this.accountOf(next)?.label ?? 'the default login';
+    if (task && task.status !== 'done' && task.status !== 'failed') {
+      this.log(agent.id, task.id, 'system', `Switched to the Claude account ${label}; the session continues there.`);
+      await this.openSession(this.store.require('agent', agent.id), task, wasWorking ? 'Continue the task.' : null)
+        .catch((err) => this.log(agent.id, task.id, 'error', `Could not restart on the new account: ${err.message}`));
+    } else {
+      this.log(agent.id, null, 'system', `Switched to the Claude account ${label}.`);
+      this.store.patch('agent', agent.id, { status: this.runnerFor(next) ? 'idle' : 'offline', activity: null });
+    }
+    return this.store.require('agent', agent.id);
   }
 
   private readonly handlers: {
@@ -393,7 +530,7 @@ export class Orchestrator {
     scan_repo_agents: ({ projectId }, user) => {
       const project = this.store.require('project', projectId);
       // Read your own checkout when you have a runner; the host's otherwise.
-      return this.syncRepoAgents(project, this.runnerForUser(user.id) ?? this.localRunner);
+      return this.syncRepoAgents(project, this.runnerOf(user.id) ?? this.localRunner);
     },
 
     set_github_token: async ({ token }) => {
@@ -547,7 +684,7 @@ export class Orchestrator {
 
     // ---- conversations
     send_message: async ({ agentId, text }, user) => {
-      const agent = this.ownAgent(agentId, user);
+      const agent = this.driver(agentId, user);
       const body = requireText(text, 'text');
       const live = this.sessions.get(agentId);
       if (live) {
@@ -563,11 +700,13 @@ export class Orchestrator {
     },
 
     agent_terminal_open: async ({ agentId, cols, rows }, user) => {
+      // A session being (re)started, e.g. after an account switch or a takeover: wait for it.
+      for (let i = 0; i < 600 && this.starting.has(agentId); i++) await new Promise((r) => setTimeout(r, 100));
       const agent = this.store.require('agent', agentId);
       const mine = agent.ownerId === user.id;
       if (!this.sessions.has(agentId)) {
         if (isRepo(agent)) throw new Error(`${agent.name} is on the balcony. Summon them to put them to work.`);
-        if (!mine) throw new Error(`${agent.name} isn't working right now; only their owner can start a session`);
+        if (!mine) throw new Error(`${agent.name} isn't working right now; only their owner can start a session (or take it over to work on it yourself)`);
         const task = agent.currentTaskId ? this.store.get('task', agent.currentTaskId) : undefined;
         // Reopen the current task's conversation, or start a free one.
         if (task && (task.status === 'in_progress' || task.status === 'review')) {
@@ -578,12 +717,13 @@ export class Orchestrator {
         }
       }
       const live = this.sessions.get(agentId)!;
-      if (mine) live.session.resize(cols, rows);
-      return { history: live.buffer, interactive: live.interactive ?? true, canType: mine };
+      const canType = this.canDrive(this.store.require('agent', agentId), user);
+      if (canType) live.session.resize(cols, rows);
+      return { history: live.buffer, interactive: live.interactive ?? true, canType };
     },
 
     agent_terminal_input: ({ agentId, data }, user) => {
-      this.ownAgent(agentId, user);
+      this.driver(agentId, user);
       const live = this.sessions.get(agentId);
       if (!live) throw new Error('The session has ended; open the computer again');
       live.session.write(data);
@@ -591,7 +731,8 @@ export class Orchestrator {
     },
 
     agent_terminal_resize: ({ agentId, cols, rows }, user) => {
-      if (this.store.get('agent', agentId)?.ownerId !== user.id) return null;
+      const agent = this.store.get('agent', agentId);
+      if (!agent || !this.canDrive(agent, user)) return null;
       this.sessions.get(agentId)?.session.resize(cols, rows);
       return null;
     },
@@ -599,7 +740,7 @@ export class Orchestrator {
     agent_terminal_close: () => null,
 
     interrupt_agent: ({ agentId }, user) => {
-      this.ownAgent(agentId, user);
+      this.driver(agentId, user);
       const live = this.sessions.get(agentId);
       if (!live) throw new Error('Agent is not running');
       live.session.interrupt();
@@ -610,7 +751,7 @@ export class Orchestrator {
       const pending = this.approvals.get(id);
       if (!pending) throw new Error('Approval not found or already resolved');
       const { approval } = pending;
-      this.ownAgent(approval.agentId, user);
+      this.driver(approval.agentId, user);
       this.approvals.delete(id);
       this.store.broadcast({ type: 'approval_resolved', id });
       const live = this.sessions.get(approval.agentId);
@@ -624,6 +765,110 @@ export class Orchestrator {
     },
 
     get_transcript: ({ agentId, limit }) => this.db.transcript(agentId, Math.min(limit ?? 500, 2000)),
+
+    // ---- Claude accounts (each player's own logins, on their own machine)
+    add_account: ({ label }, user) => {
+      const runner = this.runnerOf(user.id);
+      if (!runner) throw new Error('Your machine is not connected: start your runner first (Team → Run your agents)');
+      const id = randomUUID();
+      const account = this.store.put('account', {
+        id, userId: user.id, label: requireText(label, 'label'), configDir: `${ACCOUNTS_DIR}/${id.slice(0, 8)}`,
+        email: null, plan: null, loggedIn: false, checkedAt: 0,
+      });
+      try {
+        this.startLogin(account, runner);
+      } catch (err) {
+        this.store.remove('account', id);
+        throw err;
+      }
+      return account;
+    },
+
+    account_login_input: ({ accountId, data }, user) => {
+      const login = this.logins.get(accountId);
+      if (!login || login.userId !== user.id) throw new Error('No login is running for that account');
+      login.session.write(String(data));
+      return null;
+    },
+
+    refresh_accounts: (_args, user) => this.refreshAccounts(user.id),
+
+    remove_account: async ({ id }, user) => {
+      const account = this.store.require('account', id);
+      if (account.userId !== user.id) throw new Error('That Claude account belongs to another player');
+      if (account.configDir === null) throw new Error('The default login can\'t be removed; log out with `claude auth logout` on your machine instead');
+      // Agents on it go back to the default login (restarting a running session there).
+      for (const agent of this.store.all('agent').filter((a) => a.accountId === id)) await this.applyAccount(agent, null);
+      await this.logins.get(id)?.session.close();
+      this.logins.delete(id);
+      await this.runnerOf(user.id)?.accountRemove(account.configDir).catch(() => {});
+      this.store.remove('account', id);
+      return null;
+    },
+
+    set_agent_account: ({ agentId, accountId }, user) => {
+      const agent = this.ownAgent(agentId, user);
+      if (this.starting.has(agentId)) throw new Error(`${agent.name} is busy`);
+      return this.applyAccount(agent, this.pickAccount(user.id, accountId)?.id ?? null);
+    },
+
+    take_over_agent: async ({ agentId, accountId }, user) => {
+      const agent = this.store.require('agent', agentId);
+      if (agent.kind === 'repo') throw new Error(`${agent.name} is a repo agent: invoke it on your own account instead`);
+      if (agent.ownerId === user.id) throw new Error(`${agent.name} already works on your account; switch accounts on their computer instead`);
+      const target = this.runnerOf(user.id);
+      if (!target) throw new Error('Your machine is not connected: start your runner first (Team → Run your agents)');
+      const account = this.pickAccount(user.id, accountId);
+      if (this.starting.has(agentId)) throw new Error(`${agent.name} is busy`);
+      const current = agent.currentTaskId ? this.store.get('task', agent.currentTaskId) : undefined;
+      const task = current && current.status !== 'done' && current.status !== 'failed' ? current : undefined;
+      const project = task ? this.store.require('project', task.projectId) : null;
+      if (task?.branch && project && !project.remoteUrl) {
+        throw new Error(`${project.name} has no git origin, so its branch can't move to your machine. Add an origin (e.g. GitHub) first.`);
+      }
+
+      const from = this.store.get('user', agent.ownerId);
+      this.starting.add(agentId); // keeps dispatch away during the handoff
+      let handoff: HandoffResult | null = null;
+      try {
+        // 1. Stop the session on the previous owner's machine and account.
+        await this.endSession(agentId);
+        // 2. Save and publish its work: WIP commit + push of the task branch.
+        const source = this.runnerFor(agent);
+        if (task && project && source) {
+          if (task.branch) this.log(agentId, task.id, 'system', `${user.name} is taking over: saving and pushing ${task.branch}…`);
+          try {
+            handoff = await source.handoff(project, task);
+            if (handoff.error && task.branch && !handoff.pushed) throw new Error(handoff.error);
+          } catch (err) {
+            // Nothing moved: the agent stays with its owner, stopped.
+            this.store.patch('agent', agentId, { status: 'idle', activity: null });
+            this.log(agentId, task.id, 'error', `Takeover by ${user.name} failed: ${(err as Error).message}`);
+            throw new Error(`Could not hand off ${task.branch ?? task.title} from ${from?.name ?? 'the previous owner'}'s machine: ${(err as Error).message}`);
+          }
+          // The worktree there is clean now; free it.
+          if (task.worktreePath) await source.cleanup(project, task).catch(() => false);
+        }
+        // 3. The agent now works for you, on your account.
+        this.store.patch('agent', agentId, { ownerId: user.id, accountId: account?.id ?? null, status: 'idle', activity: null, live: false });
+        if (task) this.store.patch('task', task.id, { assigneeId: agentId, sessionId: null, worktreePath: null });
+        this.log(agentId, task?.id ?? null, 'system',
+          `${user.name} took over ${agent.name}${from ? ` from ${from.name}` : ''}; it now runs on ${user.name}'s Claude account.`);
+      } finally {
+        this.starting.delete(agentId);
+      }
+      // 4. Continue where it stopped, with a summary of the work so far.
+      if (task) {
+        const prompt = handoffPrompt({
+          agent, task: this.store.require('task', task.id), fromName: from?.name ?? 'a teammate', toName: user.name,
+          transcript: this.db.transcript(agentId, 400), handoff,
+        });
+        await this.startTask(this.store.require('agent', agentId), this.store.require('task', task.id), prompt)
+          .catch((err) => this.log(agentId, task.id, 'error', `Could not continue after the takeover: ${err.message}`));
+      }
+      this.dispatch();
+      return this.store.require('agent', agentId);
+    },
 
     // ---- repo agents (balcony crew)
     invoke_repo_agent: async ({ agentId, prompt, accountId }, user) => {
@@ -639,7 +884,7 @@ export class Orchestrator {
         createdBy: user.id, createdAt: now, updatedAt: now,
       });
       try {
-        await this.summon(agent, user, task, text, accountId ?? null);
+        await this.summon(agent, user, task, text, this.pickAccount(user.id, accountId)?.id ?? null);
       } catch (err) {
         this.store.remove('task', task.id);
         throw err;
@@ -663,7 +908,7 @@ export class Orchestrator {
       if (!task) throw new Error('This conversation is gone (its task was removed from the board). Summon the agent again from the balcony.');
       if (!mail.read) this.store.broadcast({ type: 'mail', mail: this.mailbox.patch(id, { read: true }) });
       const live = this.sessions.get(agent.id);
-      if (live && live.taskId === task.id && agent.ownerId === user.id) {
+      if (live && live.taskId === task.id && this.canDrive(agent, user)) {
         // Still at the desk in this conversation: just keep talking.
         this.store.patch('task', task.id, { status: 'in_progress' });
         live.session.send(body);
@@ -671,7 +916,10 @@ export class Orchestrator {
       }
       this.requireOnBalcony(agent);
       this.store.patch('task', task.id, { status: 'in_progress', assigneeId: agent.id });
-      await this.summon(agent, user, this.store.require('task', task.id), body, agent.accountId);
+      // Same account as last time when it's still yours and logged in; your default login otherwise.
+      let accountId: ID | null = null;
+      try { accountId = this.pickAccount(user.id, agent.accountId)?.id ?? null; } catch {}
+      await this.summon(agent, user, this.store.require('task', task.id), body, accountId);
       return null;
     },
 
@@ -681,13 +929,6 @@ export class Orchestrator {
       return null;
     },
 
-    // ---- Claude accounts: not implemented on the host yet
-    add_account: () => { throw new Error('Claude accounts are not available yet'); },
-    account_login_input: () => { throw new Error('Claude accounts are not available yet'); },
-    refresh_accounts: () => [],
-    remove_account: () => { throw new Error('Claude accounts are not available yet'); },
-    set_agent_account: () => { throw new Error('Claude accounts are not available yet'); },
-    take_over_agent: () => { throw new Error('Taking over agents is not available yet'); },
 
     get_usage_report: () =>
       this.db.usageReport({
@@ -731,15 +972,20 @@ export class Orchestrator {
 
     remove_member: async ({ id }) => {
       const member = this.store.require('user', id);
-      if (member.role === 'owner') throw new Error('The owner cannot be removed');
+      if (member.role === 'owner') throw new Error('The boss cannot be removed');
       for (const a of this.store.all('agent').filter((x) => x.ownerId === id && isStaff(x))) await this.handlers.fire_agent({ id: a.id }, this.owner(), { kind: 'user', user: this.owner() });
       // Repo agents can't be fired: stop their work for this member and hand them back to the owner.
       for (const a of this.store.all('agent').filter((x) => x.ownerId === id && isRepo(x))) {
         await this.endSession(a.id);
         this.backToBalcony(a.id);
-        this.store.patch('agent', a.id, { ownerId: this.owner().id });
+        this.store.patch('agent', a.id, { ownerId: this.owner().id, accountId: null });
       }
       for (const inv of this.store.all('invite').filter((i) => i.usedBy === id)) this.store.remove('invite', inv.id);
+      for (const acc of this.store.all('account').filter((a) => a.userId === id)) {
+        await this.logins.get(acc.id)?.session.close();
+        this.logins.delete(acc.id);
+        this.store.remove('account', acc.id);
+      }
       this.store.remove('user', id);
       return null;
     },
@@ -779,7 +1025,7 @@ export class Orchestrator {
     for (const agent of this.store.all('agent').filter(isStaff)) {
       let next = this.isAvailable(agent, true) ? todo.find((t) => t.assigneeId === agent.id) : undefined;
       if (!next && this.store.settings.dispatchMode === 'auto' && this.isAvailable(agent)) {
-        // Managers plan and delegate; they don't grab open tasks themselves.
+        // Coordinators plan and delegate; they don't grab open tasks themselves.
         next = agent.isManager ? undefined : todo.find((t) => !t.assigneeId && this.store.get('project', t.projectId)?.floorId === agent.floorId);
       }
       if (!next) continue;
@@ -816,6 +1062,10 @@ export class Orchestrator {
     if (this.starting.has(agent.id)) throw new Error(`${agent.name} is busy`);
     const runner = this.runnerFor(agent);
     if (!runner) throw new Error(`${agent.name}'s machine is offline`);
+    const account = this.accountOf(agent);
+    if (account?.configDir && account.checkedAt && !account.loggedIn) {
+      throw new Error(`${agent.name}'s Claude account "${account.label}" is logged out; log in again or switch accounts`);
+    }
     this.starting.add(agent.id);
     try {
       if (this.sessions.has(agent.id)) await this.endSession(agent.id);
@@ -836,13 +1086,15 @@ export class Orchestrator {
           prompt,
           mcpServers: Object.fromEntries(integrations.map((i) => [i.id, i.config])),
           hq: { url: `ws://127.0.0.1:${this.config.port}`, token, manager: agent.isManager },
-          // Claude accounts are not implemented on the host yet: always the machine's default login.
-          configDir: null,
+          configDir: this.accountOf(agent)?.configDir ?? null,
           repoAgentName: agent.repo?.agentName ?? null,
         },
         (e) => this.onSessionEvent(agent.id, taskId, sessionKey, e),
       );
-      this.sessions.set(agent.id, { session, taskId, closing: false, token, key: sessionKey, interactive: null, buffer: '', lastText: null });
+      this.sessions.set(agent.id, {
+        session, taskId, closing: false, token, key: sessionKey, interactive: null, buffer: '', lastText: null,
+        accountUserId: this.accountOf(agent)?.userId ?? agent.ownerId,
+      });
       this.store.patch('agent', agent.id, { live: true, ...(prompt ? {} : { status: 'idle', activity: null }) });
     } catch (err) {
       this.store.patch('agent', agent.id, { status: 'error', activity: null });
@@ -877,7 +1129,7 @@ export class Orchestrator {
     }
     const project = this.store.get('project', task.projectId);
     // A repo agent's worktree lives on the machine of whoever summoned it for this task.
-    const runner = agent?.kind === 'repo' ? this.runnerForUser(task.createdBy) : agent ? this.runnerFor(agent) : this.localRunner;
+    const runner = agent?.kind === 'repo' ? this.runnerOf(task.createdBy) : agent ? this.runnerFor(agent) : this.localRunner;
     if (project && task.worktreePath && runner && (await runner.cleanup(project, task))) {
       if (this.store.get('task', task.id)) this.store.patch('task', task.id, { worktreePath: null });
     }
@@ -1095,7 +1347,7 @@ export class Orchestrator {
    */
   private async summon(agent: Agent, user: User, task: Task, prompt: string, accountId: ID | null) {
     if (!agent.repo) throw new Error(`${agent.name} is not a repo agent`);
-    if (!this.runnerForUser(user.id)) {
+    if (!this.runnerOf(user.id)) {
       throw new Error(`Your machine isn't connected: start your runner (npm run join …) so ${agent.name} can work with your Claude login`);
     }
     // Still walking away from a desk: go back to it. Otherwise take the first free one.

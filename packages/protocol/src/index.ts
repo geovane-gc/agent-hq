@@ -8,8 +8,11 @@ export type ID = string;
 
 // ---------------------------------------------------------------- people
 
-/** owner: the boss (owns the building). member: shown as "Manager" in the UI. */
-export type UserRole = 'owner' | 'member';
+/**
+ * owner: the boss (owns the building, shown as "Boss"). manager: every other
+ * player (stored as 'member' by older versions, migrated on load).
+ */
+export type UserRole = 'owner' | 'manager';
 
 /**
  * A Claude login on a player's machine. Each player may connect several;
@@ -20,7 +23,11 @@ export interface ClaudeAccount {
   id: ID;
   userId: ID;
   label: string;
-  /** Claude Code config dir for this login; null = the machine's default login. */
+  /**
+   * Claude Code config dir (CLAUDE_CONFIG_DIR) for this login, on the owner's
+   * machine; relative paths are resolved against that runner's data dir.
+   * null = the machine's default login.
+   */
   configDir: string | null;
   email: string | null;
   /** e.g. "pro", "max" (from `claude auth status`). */
@@ -149,7 +156,7 @@ export type RepoAgentLocation = 'balcony' | 'to_desk' | 'desk' | 'to_balcony';
 
 export interface RepoAgentInfo {
   projectId: ID;
-  /** Name passed to `claude --agent` (the file name in .claude/agents without .md). */
+  /** Name passed to `claude --agent`: the `name` in the agent file's frontmatter (usually its file name without .md). */
   agentName: string;
   description: string;
   /** No edit/write tools in its definition: runs directly in the repo instead of a worktree. */
@@ -176,7 +183,7 @@ export interface Agent {
   /** Extra instructions appended to the adapter's default system prompt. */
   instructions: string;
   permissionMode: PermissionMode;
-  /** Managers can create and assign board tasks through the HQ MCP tools. */
+  /** Coordinators can create and assign board tasks through the HQ MCP tools. */
   isManager: boolean;
   /** Ids of integrations (MCP servers) from settings this agent may use. */
   integrations: ID[];
@@ -514,8 +521,13 @@ export type RunnerOp =
   | { op: 'scan_agents'; requestKey: string; project: Project }
   /** `claude auth status --json` for each config dir; answered with runner_reply. */
   | { op: 'account_status'; requestKey: string; configDirs: Array<string | null> }
-  /** Starts `claude auth login` in a PTY for that config dir; output via runner_event 'pty' on requestKey. */
+  /**
+   * Starts `claude auth login` in a PTY for that config dir; output via runner_event 'pty' on requestKey,
+   * then 'exit'. Keystrokes and close use pty_input / close with sessionKey = requestKey.
+   */
   | { op: 'account_login'; requestKey: string; configDir: string }
+  /** Deletes an account's config dir (never the default login); answered with runner_reply. */
+  | { op: 'account_remove'; requestKey: string; configDir: string }
   /** Before a takeover: commit WIP on the task branch and push it if there is an origin; answered with runner_reply. */
   | { op: 'handoff'; requestKey: string; project: Project; task: Task };
 

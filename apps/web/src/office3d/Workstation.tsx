@@ -2,7 +2,10 @@ import { useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Agent, AgentStatus, Task } from '@agent-hq/protocol';
-import { hash01, level, STATUS_LABEL } from '../agentUtil.ts';
+import { COORDINATOR, hash01, level, STATUS_ICON, STATUS_LABEL } from '../agentUtil.ts';
+import { useClient } from '../api.ts';
+import { accountOf, planLabel } from '../components/Accounts.tsx';
+import { humanize } from '../format.ts';
 import type { Interactable } from './interact.ts';
 import { Label } from './Label.tsx';
 import { Character, Model, type CharacterClip } from './models.tsx';
@@ -59,7 +62,11 @@ function useScreenMaterial(status: AgentStatus) {
 function Bubble({ agent, task, gamification, selected, onClick }: {
   agent: Agent; task: Task | undefined; gamification: boolean; selected: boolean; onClick: () => void;
 }) {
-  const icon = { working: '⌨️', awaiting_approval: '✋', error: '⚠️', idle: '☕', offline: '💤' }[agent.status];
+  const icon = STATUS_ICON[agent.status];
+  // Whose Claude account (and plan) this computer runs on.
+  const { world } = useClient();
+  const account = world ? accountOf(world, agent) : undefined;
+  const player = world?.users.find((u) => u.id === agent.ownerId);
   return (
     <Label position={[0, 1.65, 0]} center distanceFactor={14} zIndexRange={[20, 0]}>
       <button className={`tag status-${agent.status} ${selected ? 'selected' : ''}`} onClick={onClick}>
@@ -67,8 +74,13 @@ function Bubble({ agent, task, gamification, selected, onClick }: {
         <span className="tag-text">
           <strong>{agent.name}</strong>
           {gamification && <em> Lv{level(agent.xp)}</em>}
-          {agent.isManager && <em> ★</em>}
-          <small>{agent.activity ?? (agent.status === 'offline' ? 'Away' : task?.title ?? STATUS_LABEL[agent.status])}</small>
+          {agent.isManager && <em title={COORDINATOR.label}> ★</em>}
+          <small>{agent.activity ? humanize(agent.activity) : (agent.status === 'offline' ? 'Away' : task?.title ?? STATUS_LABEL[agent.status])}</small>
+          {player && (
+            <small className="tag-account" title={account?.email ?? account?.label ?? 'Default login'}>
+              🔑 {player.name}{account?.plan ? ` · ${planLabel(account.plan)}` : ''}
+            </small>
+          )}
         </span>
       </button>
     </Label>

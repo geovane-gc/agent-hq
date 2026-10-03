@@ -1,8 +1,9 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ID, Project, RunnerSessionEvent, RunnerStart, Task } from '@agent-hq/protocol';
+import { accountStatus, ensureSessionInConfigDir, removeAccountDir, resolveConfigDir, startAccountLogin, type AccountStatus } from '../accounts.ts';
 import type { AgentAdapter, AgentSession, PermissionDecision } from '../adapters/adapter.ts';
-import { addWorktree, removeWorktree } from '../git.ts';
+import { addWorktree, handoffBranch, removeWorktree, syncBranchFromOrigin, type HandoffResult } from '../git.ts';
 import { platformMcpConfig } from '../integrations.ts';
 import { agentWorkspace, buildSystemPrompt, memoryFile, repoAgentSystemPrompt } from '../memory.ts';
 import { scanRepoAgents, type RepoAgentDef } from '../repo-agents.ts';
@@ -72,6 +73,9 @@ export class LocalRunner implements Runner {
         // Read-only repo agents work in the checkout itself; everyone else gets a worktree per task.
         const isolate = !agent.repo?.readOnly;
         if (task && ws.git && isolate && !(task.worktreePath && existsSync(task.worktreePath))) {
+          // The branch may have been started on another machine (a takeover, or a
+          // teammate's runner): bring it from origin first.
+          if (task.branch) await syncBranchFromOrigin(ws.repoPath, task.branch);
           const branch = task.branch ?? `hq/${slug(agent.name)}-${task.id.slice(0, 8)}`;
           // Short ids keep paths under Windows' MAX_PATH once git adds its own nesting.
           const worktreePath = path.join(this.dataDir, 'wt', project.id.slice(0, 8), task.id.slice(0, 8));
@@ -84,6 +88,16 @@ export class LocalRunner implements Runner {
         cwd = agentWorkspace(this.dataDir, agent);
       }
       if (closed) return;
+
+      // The Claude account this agent runs on. Its sessions live in that
+      // account's config dir, so a session started on another account is
+      // copied over before resuming it.
+      const configDir = resolveConfigDir(this.dataDir, start.configDir);
+      let resumeSessionId = task?.sessionId ?? null;
+      if (resumeSessionId && !ensureSessionInConfigDir(this.dataDir, resumeSessionId, configDir)) {
+        onEvent({ type: 'transcript', kind: 'system', text: 'The previous conversation is not on this machine; starting a new one.' });
+        resumeSessionId = null;
+      }
 
       const hqArgs = [HQ_MCP, '--url', this.hqUrl, '--token', start.hq.token, ...(start.hq.manager ? ['--manager'] : [])];
       const hookUrl = await this.hookServer.url();
@@ -98,7 +112,8 @@ export class LocalRunner implements Runner {
           systemPrompt: memoryPath
             ? buildSystemPrompt({ agent, project, task, memoryPath, remote: this.remote })
             : repoAgentSystemPrompt({ agent, project: project!, task, remote: this.remote }),
-          resumeSessionId: task?.sessionId ?? null,
+          resumeSessionId,
+          configDir,
           addDirs: memoryPath ? [path.dirname(memoryPath)] : [],
           mcpServers: repoAgent ? {} : {
             'agent-hq': { type: 'stdio', command: process.execPath, args: ['--no-warnings', ...hqArgs] },
@@ -141,5 +156,30 @@ export class LocalRunner implements Runner {
     if (!task.worktreePath || !existsSync(task.worktreePath)) return true;
     const ws = await this.resolveRepo(project).catch(() => null);
     return ws ? removeWorktree(ws.repoPath, task.worktreePath) : false;
+  }
+
+  // ------------------------------------------------------------------ Claude accounts
+
+  accountStatus(configDirs: Array<string | null>): Promise<AccountStatus[]> {
+    return Promise.all(configDirs.map((dir) => accountStatus(this.dataDir, dir)));
+  }
+
+  accountLogin(_key: string, configDir: string, onEvent: (e: RunnerSessionEvent) => void): RunnerSession {
+    return startAccountLogin(this.dataDir, configDir, onEvent);
+  }
+
+  async accountRemove(configDir: string): Promise<void> {
+    removeAccountDir(this.dataDir, configDir);
+  }
+
+  async handoff(project: Project, task: Task): Promise<HandoffResult> {
+    const notesFile = task.assigneeId ? path.join(this.dataDir, 'memory', task.assigneeId, `${project.id}.md`) : null;
+    const notes = notesFile && existsSync(notesFile) ? readFileSync(notesFile, 'utf8') : null;
+    if (!task.branch) return { branch: null, committed: false, pushed: false, head: null, notes, error: null };
+    const ws = await this.resolveRepo(project);
+    if (!ws.git) return { branch: task.branch, committed: false, pushed: false, head: null, notes, error: 'not a git repository' };
+    const worktree = task.worktreePath && existsSync(task.worktreePath) ? task.worktreePath : null;
+    const result = await handoffBranch(ws.repoPath, worktree, task.branch, `WIP: hand off "${task.title}" (Agent HQ takeover)`);
+    return { ...result, notes };
   }
 }
