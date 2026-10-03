@@ -163,7 +163,7 @@ class Client {
     const agent = world.agents.find((a) => a.id === t.agentId)?.name ?? 'the agent';
     const owner = world.users.find((u) => u.id === t.ownerId)?.name ?? 'Its owner';
     const text = t.status === 'approved' ? `${owner} approved: ${agent} now works on your account.` : `${owner} declined your request to take over ${agent}.`;
-    window.dispatchEvent(new CustomEvent('hq-error', { detail: text }));
+    window.dispatchEvent(new CustomEvent(t.status === 'approved' ? 'hq-notice' : 'hq-error', { detail: text }));
   }
 
   request<K extends CommandName>(command: K, args: Commands[K]['args']): Promise<Commands[K]['result']> {

@@ -1,12 +1,22 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
-export function Modal(props: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+export function Modal(props: { title: string; subtitle?: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  const dialog = useRef<HTMLDivElement>(null);
+  // Keyboard users land inside the dialog, and go back where they were when it closes.
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    if (!dialog.current?.contains(document.activeElement)) dialog.current?.focus();
+    return () => before?.focus?.();
+  }, []);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
-      <div className={`modal ${props.wide ? 'wide' : ''}`} role="dialog" aria-label={props.title}>
-        <header>
-          <h2>{props.title}</h2>
-          <button className="ghost" onClick={props.onClose} aria-label="Close">✕</button>
+      <div ref={dialog} tabIndex={-1} className={`modal ${props.wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={props.title}>
+        <header className="modal-head">
+          <div>
+            <h2>{props.title}</h2>
+            {props.subtitle && <div className="modal-subtitle">{props.subtitle}</div>}
+          </div>
+          <button className="icon-btn close" onClick={props.onClose} aria-label="Close" title="Close (Esc)">✕</button>
         </header>
         {props.children}
       </div>
@@ -17,6 +27,7 @@ export function Modal(props: { title: string; onClose: () => void; children: Rea
 /** A modal form whose submit handler may be async; keeps the modal open on error. */
 export function FormModal(props: {
   title: string;
+  subtitle?: ReactNode;
   submitLabel: string;
   onClose: () => void;
   onSubmit: (data: FormData) => Promise<unknown>;
@@ -40,11 +51,11 @@ export function FormModal(props: {
   }
 
   return (
-    <Modal title={props.title} onClose={props.onClose}>
+    <Modal title={props.title} subtitle={props.subtitle} onClose={props.onClose}>
       <form className="form" onSubmit={submit}>
         {props.children}
         {error && <p className="error">{error}</p>}
-        <footer>
+        <footer className="form-actions">
           <button type="button" className="ghost" onClick={props.onClose}>Cancel</button>
           <button type="submit" disabled={busy}>{busy ? 'Working…' : props.submitLabel}</button>
         </footer>

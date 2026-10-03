@@ -2,10 +2,17 @@ import { useEffect, useState } from 'react';
 import type { Integration, Invite, Snapshot } from '@agent-hq/protocol';
 import { client, run } from '../api.ts';
 import { AccountsPanel } from './Accounts.tsx';
+import { ago, initials, stamp } from '../format.ts';
 import { COLORS, LookPicker } from './forms.tsx';
 import { Modal } from './Modal.tsx';
 
 type Tab = 'general' | 'integrations' | 'team' | 'accounts';
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'general', label: '⚙️ General' },
+  { id: 'integrations', label: '🔌 Integrations' },
+  { id: 'team', label: '👥 Team' },
+  { id: 'accounts', label: '🔑 Claude accounts' },
+];
 
 function General({ world }: { world: Snapshot }) {
   const owner = world.you.role === 'owner';
@@ -16,59 +23,73 @@ function General({ world }: { world: Snapshot }) {
     run('update_profile', { appearance: next }).catch(() => {});
   };
   return (
-    <div className="form">
-      <h3>You</h3>
-      <div className="row">
-        <input value={name} onChange={(e) => setName(e.target.value)} />
-        <button onClick={() => run('update_profile', { name }).catch(() => {})}>Rename</button>
-      </div>
-      <div className="swatches">
-        {COLORS.map((c) => (
-          <button key={c} className={`swatch ${world.you.color === c ? 'on' : ''}`} style={{ background: c }} onClick={() => run('update_profile', { color: c }).catch(() => {})} />
-        ))}
-      </div>
-      <h3>Your avatar</h3>
-      <p className="hint">How teammates see you in the office{owner ? ' (as the boss you wear a suit)' : ''}.</p>
-      <LookPicker look={look} onChange={changeLook} />
+    <div className="form settings-grid">
+      <section className="card-section">
+        <h3>You</h3>
+        <label>Display name
+          <div className="row nowrap">
+            <input value={name} onChange={(e) => setName(e.target.value)} />
+            <button type="button" disabled={!name.trim() || name === world.you.name} onClick={() => run('update_profile', { name }).catch(() => {})}>Rename</button>
+          </div>
+        </label>
+        <div className="field">
+          <span className="field-label">Name tag color</span>
+          <div className="swatches" role="radiogroup" aria-label="Name tag color">
+            {COLORS.map((c) => (
+              <button key={c} role="radio" aria-checked={world.you.color === c} aria-label={c} className={`swatch ${world.you.color === c ? 'on' : ''}`} style={{ background: c }} onClick={() => run('update_profile', { color: c }).catch(() => {})} />
+            ))}
+          </div>
+        </div>
+      </section>
+      <section className="card-section">
+        <h3>Your avatar</h3>
+        <p className="hint">How teammates see you in the office{owner ? ' (as the boss you wear a suit)' : ''}.</p>
+        <LookPicker look={look} onChange={changeLook} />
+      </section>
       {owner && (
-        <>
+        <section className="card-section span2">
           <h3>Company</h3>
-          <label>Maximum agents
+          <label className="toggle">
+            <input type="checkbox" role="switch" checked={world.settings.dispatchMode === 'auto'}
+              onChange={(e) => run('update_settings', { patch: { dispatchMode: e.target.checked ? 'auto' : 'manual' } }).catch(() => {})} />
+            <span><strong>Auto-dispatch</strong><small>Idle agents pick up unassigned tasks from their floor's projects.</small></span>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" role="switch" checked={world.settings.gamification}
+              onChange={(e) => run('update_settings', { patch: { gamification: e.target.checked } }).catch(() => {})} />
+            <span><strong>Gamification</strong><small>Agents earn XP and level up as they finish turns.</small></span>
+          </label>
+          <label className="inline-field">
+            <span><strong>Maximum agents</strong><small>{world.agents.length} hired across the company.</small></span>
             <input
               type="number" min={1} max={100} defaultValue={world.settings.maxAgents}
               onBlur={(e) => run('update_settings', { patch: { maxAgents: Number(e.target.value) } }).catch(() => {})}
             />
           </label>
-          <label className="check">
-            <input type="checkbox" checked={world.settings.dispatchMode === 'auto'}
-              onChange={(e) => run('update_settings', { patch: { dispatchMode: e.target.checked ? 'auto' : 'manual' } }).catch(() => {})} />
-            Auto-dispatch: idle agents pick up open tasks from their floor's projects
+          <label className="toggle">
+            <input type="checkbox" role="switch" checked={world.settings.takeoverPolicy === 'approval'}
+              onChange={(e) => run('update_settings', { patch: { takeoverPolicy: e.target.checked ? 'approval' : 'free' } }).catch(() => {})} />
+            <span>
+              <strong>Takeovers need approval</strong>
+              <small>Taking over another player's agent waits for the OK of the player whose Claude account runs it.</small>
+            </span>
           </label>
-          <label className="check">
-            <input type="checkbox" checked={world.settings.gamification}
-              onChange={(e) => run('update_settings', { patch: { gamification: e.target.checked } }).catch(() => {})} />
-            Gamification: XP and levels for agents
-          </label>
-          <label>Taking over another player's agent
-            <select value={world.settings.takeoverPolicy}
-              onChange={(e) => run('update_settings', { patch: { takeoverPolicy: e.target.value as 'approval' | 'free' } }).catch(() => {})}>
-              <option value="approval">Needs the approval of the player whose account runs it</option>
-              <option value="free">Allowed right away</option>
-            </select>
-          </label>
-        </>
+        </section>
       )}
     </div>
   );
 }
 
-function IntegrationEditor({ integration, onSave, onRemove }: { integration: Integration; onSave: (i: Integration) => void; onRemove: () => void }) {
+function IntegrationEditor({ integration, users, onSave, onRemove }: { integration: Integration; users: number; onSave: (i: Integration) => void; onRemove: () => void }) {
   const [json, setJson] = useState(JSON.stringify(integration.config, null, 2));
   const [error, setError] = useState<string | null>(null);
   return (
     <details className="integration">
-      <summary><strong>{integration.name}</strong> <span className="muted">— {integration.description}</span></summary>
-      <p className="hint">Setup: {integration.setup}</p>
+      <summary>
+        <span className="summary-text"><strong>{integration.name}</strong><small>{integration.description}</small></span>
+        <UsedBy n={users} />
+      </summary>
+      <p className="hint"><strong>Setup:</strong> {integration.setup}</p>
       <textarea rows={6} value={json} onChange={(e) => setJson(e.target.value)} spellCheck={false} className="code" />
       {error && <p className="error">{error}</p>}
       <div className="row">
@@ -81,7 +102,13 @@ function IntegrationEditor({ integration, onSave, onRemove }: { integration: Int
   );
 }
 
+/** How many agents were given an integration. */
+function UsedBy({ n }: { n: number }) {
+  return <span className={`pill ${n ? 'status-working' : ''}`}>{n ? `${n} agent${n === 1 ? '' : 's'}` : 'Unused'}</span>;
+}
+
 function Integrations({ world }: { world: Snapshot }) {
+  const usedBy = (id: string) => world.agents.filter((a) => a.integrations.includes(id)).length;
   const list = world.settings.integrations;
   const save = (integrations: Integration[]) => run('update_settings', { patch: { integrations } }).catch(() => {});
   const owner = world.you.role === 'owner';
@@ -97,11 +124,15 @@ function Integrations({ world }: { world: Snapshot }) {
           <IntegrationEditor
             key={i.id}
             integration={i}
+            users={usedBy(i.id)}
             onSave={(next) => save(list.map((x, j) => (j === idx ? next : x)))}
             onRemove={() => save(list.filter((_, j) => j !== idx))}
           />
         ) : (
-          <div key={i.id} className="integration"><strong>{i.name}</strong> <span className="muted">— {i.setup}</span></div>
+          <div key={i.id} className="integration static">
+            <span className="summary-text"><strong>{i.name}</strong><small>{i.description}</small><small>Setup: {i.setup}</small></span>
+            <UsedBy n={usedBy(i.id)} />
+          </div>
         )
       ))}
       {owner && (
@@ -116,6 +147,21 @@ function Integrations({ world }: { world: Snapshot }) {
   );
 }
 
+/** A read-only invite link with a copy button. */
+function InviteLink({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => navigator.clipboard?.writeText(url).then(() => {
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }).catch(() => {});
+  return (
+    <span className="copy-field">
+      <input readOnly value={url} onFocus={(e) => e.target.select()} aria-label="Invite link" />
+      <button className="small ghost" onClick={copy}>{copied ? '✓ Copied' : 'Copy'}</button>
+    </span>
+  );
+}
+
 function Team({ world }: { world: Snapshot }) {
   const owner = world.you.role === 'owner';
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -125,18 +171,30 @@ function Team({ world }: { world: Snapshot }) {
 
   return (
     <div className="form">
-      <h3>Players</h3>
+      <h3>Players · {world.users.length}</h3>
       <ul className="people">
-        {world.users.map((u) => (
-          <li key={u.id}>
-            <span className="dot" style={{ background: u.color }} />
-            <strong>{u.name}</strong> <span className="chip">{u.role === 'owner' ? '👑 Boss' : 'Manager'}</span>
-            <span className="muted"> {u.online ? 'online' : 'offline'} · agents {u.runnerOnline ? 'can work' : 'offline (runner not connected)'}</span>
-            {owner && u.role !== 'owner' && (
-              <button className="small ghost danger" onClick={() => run('remove_member', { id: u.id }).catch(() => {})}>Remove</button>
-            )}
-          </li>
-        ))}
+        {world.users.map((u) => {
+          const agents = world.agents.filter((a) => a.ownerId === u.id).length;
+          return (
+            <li key={u.id}>
+              <span className={`avatar ${u.online ? 'online' : ''}`} style={{ background: u.color }} aria-hidden>{initials(u.name)}</span>
+              <span className="person">
+                <strong>{u.name}{u.id === world.you.id && <span className="muted"> (you)</span>}</strong>
+                <small>{u.role === 'owner' ? '👑 Boss' : 'Manager'} · {agents} agent{agents === 1 ? '' : 's'}</small>
+              </span>
+              <span className={`pill ${u.online ? 'status-working' : ''}`}>{u.online ? 'Online' : 'Offline'}</span>
+              <span
+                className={`pill ${u.runnerOnline ? 'status-working' : 'status-offline'}`}
+                title={u.runnerOnline ? 'Their agents can work' : 'No runner connected: their agents are offline'}
+              >
+                {u.runnerOnline ? 'Agents can work' : 'Runner offline'}
+              </span>
+              {owner && u.role !== 'owner' && (
+                <button className="small ghost danger" onClick={() => run('remove_member', { id: u.id }).catch(() => {})}>Remove</button>
+              )}
+            </li>
+          );
+        })}
       </ul>
 
       {world.you.role === 'manager' && (
@@ -156,19 +214,27 @@ function Team({ world }: { world: Snapshot }) {
             Teammates need to reach this machine: start the host with <code>--host 0.0.0.0</code> on your LAN, or put it behind a
             tunnel. Each teammate's agents run on their own computer and Claude subscription.
           </p>
-          <button onClick={() => {
-            const name = window.prompt('Teammate name');
-            if (name) client.request('create_invite', { name }).then(reload).catch(() => {});
-          }}>+ Invite a manager</button>
-          <ul className="people">
-            {invites.map((i) => (
-              <li key={i.id}>
-                <strong>{i.name}</strong> <span className="muted">{i.usedBy ? 'joined' : 'pending'}</span>
-                <input readOnly value={`${hostUrl}/?token=${i.token}`} onFocus={(e) => e.target.select()} />
-                <button className="small ghost danger" onClick={() => client.request('revoke_invite', { id: i.id }).then(reload).catch(() => {})}>Revoke</button>
-              </li>
-            ))}
-          </ul>
+          <div className="row">
+            <button onClick={() => {
+              const name = window.prompt('Teammate name');
+              if (name) client.request('create_invite', { name }).then(reload).catch(() => {});
+            }}>＋ Invite a manager</button>
+          </div>
+          {invites.length === 0 ? <p className="empty">No invites yet. Each invite is a private link for one teammate.</p> : (
+            <ul className="people invites">
+              {invites.map((i) => (
+                <li key={i.id}>
+                  <span className="person">
+                    <strong>{i.name}</strong>
+                    <small title={stamp(i.createdAt)}>Invited {ago(i.createdAt)}</small>
+                  </span>
+                  <span className={`pill ${i.usedBy ? 'status-working' : 'status-awaiting_approval'}`}>{i.usedBy ? 'Joined' : 'Pending'}</span>
+                  <InviteLink url={`${hostUrl}/?token=${i.token}`} />
+                  <button className="small ghost danger" onClick={() => client.request('revoke_invite', { id: i.id }).then(reload).catch(() => {})}>Revoke</button>
+                </li>
+              ))}
+            </ul>
+          )}
         </>
       )}
     </div>
@@ -179,11 +245,10 @@ export function SettingsModal({ world, onClose, initial = 'general' }: { world: 
   const [tab, setTab] = useState<Tab>(initial);
   return (
     <Modal title="Settings" onClose={onClose} wide>
-      <div className="tabs inline">
-        <button className={tab === 'general' ? 'active' : ''} onClick={() => setTab('general')}>General</button>
-        <button className={tab === 'integrations' ? 'active' : ''} onClick={() => setTab('integrations')}>Integrations</button>
-        <button className={tab === 'team' ? 'active' : ''} onClick={() => setTab('team')}>Team</button>
-        <button className={tab === 'accounts' ? 'active' : ''} onClick={() => setTab('accounts')}>Claude accounts</button>
+      <div className="tabs inline" role="tablist">
+        {TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>
+        ))}
       </div>
       {tab === 'general' && <General world={world} />}
       {tab === 'integrations' && <Integrations world={world} />}

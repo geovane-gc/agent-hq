@@ -97,7 +97,7 @@ export function TakeOverModal({ world, agent, onClose }: { world: Snapshot; agen
     setError(null);
     try {
       const res = await client.request('take_over_agent', { agentId: agent.id, accountId: chosen && chosen.configDir !== null ? chosen.id : null });
-      if (res.request) window.dispatchEvent(new CustomEvent('hq-error', { detail: `Asked ${owner?.name ?? 'the owner'} to approve. You'll be told when they decide.` }));
+      if (res.request) window.dispatchEvent(new CustomEvent('hq-notice', { detail: `Asked ${owner?.name ?? 'the owner'} to approve. You'll be told when they decide.` }));
       onClose();
     } catch (err) {
       setError((err as Error).message);
