@@ -145,6 +145,40 @@ function Ashtray({ position }: { position: Vec3 }) {
   );
 }
 
+/** A park bench looking out over the railing (+Z): wooden slats on two dark metal frames. */
+function Bench({ position }: { position: Vec3 }) {
+  const wood = <meshStandardMaterial color="#a77b52" roughness={0.8} />;
+  const metal = <meshStandardMaterial color="#3f444d" metalness={0.5} roughness={0.45} />;
+  return (
+    <group position={position}>
+      {[-0.13, 0.03, 0.19].map((z) => (
+        <mesh key={z} position={[0, 0.45, z]} castShadow receiveShadow>
+          <boxGeometry args={[1.5, 0.04, 0.13]} />
+          {wood}
+        </mesh>
+      ))}
+      {[0.62, 0.8].map((y) => (
+        <mesh key={y} position={[0, y, -0.25]} rotation={[-0.12, 0, 0]} castShadow>
+          <boxGeometry args={[1.5, 0.12, 0.035]} />
+          {wood}
+        </mesh>
+      ))}
+      {[-0.65, 0.65].map((x) => (
+        <group key={x} position={[x, 0, 0]}>
+          <mesh position={[0, 0.215, 0.02]} castShadow>
+            <boxGeometry args={[0.05, 0.43, 0.42]} />
+            {metal}
+          </mesh>
+          <mesh position={[0, 0.62, -0.25]} castShadow>
+            <boxGeometry args={[0.05, 0.36, 0.04]} />
+            {metal}
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
 export function Balcony(props: {
   layout: BalconyLayout;
   /** The floor's repo agents, in a stable order (their smoking spot index). */
@@ -155,21 +189,28 @@ export function Balcony(props: {
   gamification: boolean;
   onSummon: (agentId: ID) => void;
   onOpenAgent: (agentId: ID) => void;
+  /** Explains how to get a crew, when there is none. */
+  onEmpty: () => void;
 }) {
   const { layout, crew } = props;
+  const empty = crew.length === 0;
+  const hint: Interactable = { label: 'No balcony agents yet — click to see how to add them', action: props.onEmpty };
   const w = layout.maxX - layout.minX;
   const d = layout.maxZ - layout.minZ;
   const cx = (layout.minX + layout.maxX) / 2;
   const cz = (layout.minZ + layout.maxZ) / 2;
   const atDesk = new Map(crew.filter((a) => a.repo?.location === 'desk' && a.repo.deskIndex !== null).map((a) => [a.repo!.deskIndex!, a]));
-  const ashtrays = layout.spots.filter((_, i) => i % 3 === 1).map((s): Vec3 => [s.position[0] + 0.5, 0, s.position[2] + 0.25]);
+  const ashtrays = [
+    ...layout.spots.filter((_, i) => i % 3 === 1).map((s): Vec3 => [s.position[0] + 0.5, 0, s.position[2] + 0.25]),
+    ...layout.benches.map((b): Vec3 => [b[0] + 1.05, 0, b[2] + 0.05]),
+  ];
 
   useFrame(({ clock }) => {
     EMBER_MATERIAL.color.setHSL(0.04, 1, 0.5 + Math.sin(clock.elapsedTime * 7) * 0.08 + Math.sin(clock.elapsedTime * 2.3) * 0.05);
   });
 
   return (
-    <group>
+    <group userData={empty ? { interact: hint } : undefined}>
       {/* deck and slab */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, 0.004, cz]} receiveShadow>
         <planeGeometry args={[w, d]} />
@@ -185,8 +226,15 @@ export function Balcony(props: {
       <Model name="plant" position={[layout.minX + 0.4, 0, layout.maxZ - 0.4]} />
       <Model name="plant_tall" position={[layout.maxX - 0.35, 0, layout.minZ + 0.35]} scale={0.8} />
       {ashtrays.map((p, i) => <Ashtray key={i} position={p} />)}
+      {layout.benches.map((p, i) => <Bench key={i} position={p} />)}
       <Label position={[layout.minX + 0.6, 1.35, layout.maxZ]} center distanceFactor={15} zIndexRange={[10, 0]}>
-        <span className="tag sign">🚬 Balcony</span>
+        {empty ? (
+          <button className="tag sign balcony-empty" onClick={props.onEmpty} title="No balcony agents yet. Add agent definitions to .claude/agents/ in this floor's project repo, then re-scan.">
+            🚬 Balcony <small>· no agents yet</small>
+          </button>
+        ) : (
+          <span className="tag sign">🚬 Balcony</span>
+        )}
       </Label>
 
       {/* hot desks */}

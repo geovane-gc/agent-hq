@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { Agent, ClaudeAccount, ID, Snapshot } from '@agent-hq/protocol';
 import { client, run } from '../api.ts';
+import { notify } from '../notify.ts';
 import { Modal } from './Modal.tsx';
 
 // Claude accounts: each player connects their own logins (one Claude Code
@@ -97,7 +98,7 @@ export function TakeOverModal({ world, agent, onClose }: { world: Snapshot; agen
     setError(null);
     try {
       const res = await client.request('take_over_agent', { agentId: agent.id, accountId: chosen && chosen.configDir !== null ? chosen.id : null });
-      if (res.request) window.dispatchEvent(new CustomEvent('hq-notice', { detail: `Asked ${owner?.name ?? 'the owner'} to approve. You'll be told when they decide.` }));
+      if (res.request) notify({ icon: '⇄', title: 'Takeover', text: `Asked ${owner?.name ?? 'the owner'} to approve. You'll be told when they decide.` });
       onClose();
     } catch (err) {
       setError((err as Error).message);

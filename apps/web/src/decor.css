@@ -1,0 +1,105 @@
+/* Decorate mode (components/Decorate.tsx, office3d/decor/*). */
+
+.decor-bar, .decor-drawer {
+  position: absolute; z-index: 8;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  animation: pop-in 0.18s ease-out;
+}
+
+.decor-bar {
+  top: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px 6px 14px; border-radius: 999px;
+  max-width: calc(100% - 32px); white-space: nowrap;
+}
+.decor-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; margin-right: 6px; }
+.decor-bar .icon-btn { font-size: 17px; color: var(--text-2); }
+.decor-bar .icon-btn.on { background: var(--accent-soft); color: var(--accent); }
+.decor-cash { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--surface-2); }
+.decor-cash.career { color: #1f7a45; }
+.decor-hint { font-size: 12px; color: var(--error); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+.decor-drawer {
+  left: 16px; right: 16px; bottom: 16px;
+  border-radius: var(--radius-lg); padding: 10px 12px 12px;
+  max-height: min(46vh, 380px); overflow: auto;
+}
+.decor-drawer > .tabs.inline { margin-bottom: 10px; }
+.decor-drawer h4 { margin: 8px 0 6px; font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* items */
+.decor-items { display: flex; gap: 12px; align-items: stretch; }
+.decor-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.decor-cats { display: flex; gap: 6px; flex-wrap: wrap; }
+.decor-cats .chip { cursor: pointer; }
+.chip.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.decor-grid { display: grid; grid-auto-flow: column; grid-auto-columns: 112px; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.decor-card {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 6px 6px 8px; border-radius: var(--radius);
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); text-align: center;
+}
+.decor-card:hover:not(:disabled) { border-color: var(--border-strong); filter: none; }
+.decor-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.decor-thumb { display: grid; place-items: center; width: 96px; height: 80px; border-radius: 8px; background: linear-gradient(180deg, var(--surface-2), var(--surface-3)); overflow: hidden; }
+.decor-thumb img { width: 96px; height: 96px; object-fit: contain; margin-top: -4px; }
+.decor-thumb-wait { font-size: 28px; opacity: 0.5; animation: pulse 1.4s ease-in-out infinite; }
+.decor-card-name { font-size: 12px; font-weight: 600; line-height: 1.2; }
+.decor-price { font-size: 11px; color: var(--text-2); font-weight: 600; }
+.decor-price.free { color: var(--working); }
+.decor-price s { color: var(--muted); font-weight: 400; margin-right: 3px; }
+.decor-price.short { color: var(--error); }
+
+.decor-inspector {
+  width: 250px; flex: none; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px; border-radius: var(--radius); background: var(--surface-2);
+}
+.decor-inspector .hint { line-height: 1.4; }
+
+/* room */
+.decor-room { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 18px; }
+.decor-room h4:first-child { margin-top: 0; }
+.decor-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 6px; }
+.decor-preset {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: 6px 8px; border-radius: var(--radius); background: var(--surface); color: var(--text); border: 1px solid var(--border);
+}
+.decor-preset:hover:not(:disabled) { border-color: var(--border-strong); filter: none; }
+.decor-preset.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.decor-preset small { color: var(--muted); font-size: 11px; line-height: 1.25; }
+.decor-preset-colors { display: flex; width: 100%; height: 18px; border-radius: 5px; overflow: hidden; margin-bottom: 3px; }
+.decor-preset-colors span { flex: 1; background-size: 32px; }
+.decor-materials { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.decor-material { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 3px; background: transparent; color: var(--text-2); border: 1px solid transparent; border-radius: 10px; width: 64px; }
+.decor-material:hover:not(:disabled) { background: var(--surface-2); filter: none; }
+.decor-material span { width: 44px; height: 44px; border-radius: 8px; background-size: 64px; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12); }
+.decor-material span.glass { background: linear-gradient(135deg, #cfe8ff 0%, #f5fbff 45%, #a9d2f5 100%); }
+.decor-material small { font-size: 10.5px; line-height: 1.15; text-align: center; }
+.decor-material.active { border-color: var(--accent); background: var(--accent-soft); }
+.decor-toggles { margin-top: 10px; }
+
+/* desks */
+.decor-desk { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 18px; }
+.decor-desk header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px; }
+.decor-desk .chip { cursor: pointer; }
+.decor-desk-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; justify-content: flex-end; }
+
+/* in-world toolbar over the selected item */
+.decor-toolbar {
+  pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  background: rgb(255 255 255 / 0.96); color: #1c2026;
+  border: 2px solid #ffd84d; border-radius: 10px; padding: 3px 4px 3px 8px;
+  font-size: 12px; white-space: nowrap; box-shadow: 0 3px 10px rgb(0 0 0 / 0.2);
+}
+.decor-toolbar button { padding: 2px 7px; font-size: 13px; background: #eef0f3; color: #1c2026; border-color: transparent; }
+.decor-toolbar button.danger { background: #fde4e7; color: #c12b45; }
+
+/* labels step back while decorating */
+.html-layer.decorating .tag { opacity: 0.35; pointer-events: none; }
+
+/* the offscreen thumbnail renderer */
+.decor-baker { position: fixed; left: -10000px; top: 0; width: 112px; height: 112px; pointer-events: none; }

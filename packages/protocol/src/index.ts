@@ -93,15 +93,26 @@ export interface Building {
   name: string;
   kind: BuildingKind;
   color: string;
+  /** Exterior material (customization); missing on older saves = paint. */
+  facade?: FacadeMaterial;
+  /** Rooftop sign text; missing or empty = the company (office) name. */
+  sign?: string | null;
   createdAt: number;
 }
 
-export type FloorMaterial = 'wood' | 'carpet' | 'concrete' | 'tiles';
+/** Options for each of these are listed in catalog.ts. */
+export type FloorMaterial = 'wood' | 'wood_light' | 'wood_dark' | 'herringbone' | 'carpet' | 'carpet_gray' | 'concrete' | 'tiles' | 'checker' | 'terrazzo';
 
 export interface FloorTheme {
   floor: FloorMaterial;
+  /** Wall finish; `wallColor` tints it (glass ignores it). */
+  wall: WallFinish;
   wallColor: string;
   accentColor: string;
+  /** Light color and intensity in the room, and the time of day outside. */
+  lighting: LightingPreset;
+  /** What the windows look out on. */
+  view: WindowView;
   plants: boolean;
   lounge: boolean;
 }
@@ -306,6 +317,8 @@ export interface Settings {
    * (a TakeoverRequest). free: anyone may take over right away.
    */
   takeoverPolicy: 'approval' | 'free';
+  /** Voice chat and screen sharing (WebRTC). Change it with set_voice_settings, not update_settings. */
+  voice: VoiceSettings;
 }
 
 /**
@@ -326,7 +339,7 @@ export interface TakeoverRequest {
   createdAt: number;
 }
 
-export interface Snapshot extends TycoonSnapshot {
+export interface Snapshot extends TycoonSnapshot, PlayerMailSnapshot, MediaSnapshot, DecorSnapshot {
   you: User;
   users: User[];
   /** Everyone's connected Claude accounts (metadata only). */
@@ -383,15 +396,18 @@ export type ServerEvent =
   /** Raw output of an agent's Claude Code terminal; sent to clients that opened it. */
   | { type: 'agent_terminal_output'; agentId: ID; data: string }
   | TycoonEvent
-  | WhiteboardEvent;
+  | WhiteboardEvent
+  | PlayerMailEvent
+  | MediaEvent
+  | DecorEvent;
 
 // ---------------------------------------------------------------- commands (client -> server)
 
 type AgentEditable = 'name' | 'role' | 'model' | 'instructions' | 'permissionMode' | 'floorId' | 'isManager' | 'integrations' | 'appearance';
 
-export interface Commands extends HostCommands, WhiteboardCommands {
+export interface Commands extends HostCommands, WhiteboardCommands, PlayerMailCommands, MediaCommands, DecorCommands {
   create_building: { args: { name: string; kind: BuildingKind; color?: string }; result: Building };
-  update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color'>> }; result: Building };
+  update_building: { args: { id: ID; patch: Partial<Pick<Building, 'name' | 'kind' | 'color' | 'facade' | 'sign'>> }; result: Building };
   remove_building: { args: { id: ID }; result: null };
   create_floor: { args: { buildingId: ID; name: string }; result: Floor };
   update_floor: { args: { id: ID; patch: Partial<Pick<Floor, 'name' | 'desks' | 'theme'>> }; result: Floor };
@@ -419,6 +435,13 @@ export interface Commands extends HostCommands, WhiteboardCommands {
   set_github_token: { args: { token: string | null }; result: { configured: boolean } };
   get_github_status: { args: Record<string, never>; result: { configured: boolean; source: 'gh' | 'env' | 'settings' | null; login: string | null } };
   remove_project: { args: { id: ID }; result: null };
+  /**
+   * Opens the system's folder chooser on the machine that runs your agents
+   * (the host for the boss, only from a browser on the host itself; your
+   * `join` runner for a teammate) and returns the chosen absolute path, or
+   * null when cancelled. The desktop app uses its own dialog instead.
+   */
+  pick_folder: { args: { defaultPath?: string | null }; result: { path: string | null } };
   hire_agent: {
     args: {
       name: string;
@@ -570,7 +593,9 @@ export type RunnerOp =
    */
   | { op: 'account_remove'; requestKey: string; configDir: string; email: string | null }
   /** Before a takeover: commit WIP on the task branch and push it if there is an origin; answered with runner_reply. */
-  | { op: 'handoff'; requestKey: string; project: Project; task: Task };
+  | { op: 'handoff'; requestKey: string; project: Project; task: Task }
+  /** Shows the system's folder chooser on the runner's machine; answered with runner_reply (the path, or null when cancelled). */
+  | { op: 'pick_folder'; requestKey: string; defaultPath: string | null };
 
 export type RunnerSessionEvent =
   | { type: 'session'; sessionId: string; interactive: boolean }
@@ -640,6 +665,8 @@ export type LedgerKind =
   /** API-equivalent token cost, rolled up per day, agent and task. */
   | 'token_cost'
   | 'hiring_fee'
+  /** Decorations and desk upgrades bought (negative) or sold back (positive): an investment, like hiring. */
+  | 'furnishing'
   | 'adjustment';
 
 /** Filter for get_ledger: one kind, or every income / every expense. */
@@ -668,7 +695,7 @@ export interface EconomySummary {
   expenses: number;
   /** revenue − expenses. */
   profit: number;
-  /** Hiring fees paid so far: an investment, so it lowers cash but not profit. */
+  /** Hiring fees and furnishings paid so far (net of items sold): an investment, so it lowers cash but not profit. */
   invested: number;
   /** Income booked today (local time), counted against the daily cap. */
   earnedToday: number;
@@ -815,3 +842,247 @@ export interface WhiteboardCommands {
 }
 
 export type WhiteboardCommandName = keyof WhiteboardCommands;
+
+// ================================================================ player mail
+// Players write each other e-mail from the office computers. Messages live in
+// the office database on the host. Every participant has their own copy (read,
+// archived, deleted), and the host only ever sends a message to its sender and
+// recipients. Agent reports (`Mail` above) are shown in the same mail client.
+// Hooked in through `Snapshot extends PlayerMailSnapshot`, `ServerEvent |
+// PlayerMailEvent` and `Commands extends PlayerMailCommands`.
+
+export type PlayerMailFolder = 'inbox' | 'sent' | 'archive';
+
+/** One message, as one participant sees it. */
+export interface PlayerMail {
+  id: ID;
+  /** Id of the conversation's first message. */
+  threadId: ID;
+  fromUserId: ID;
+  toUserIds: ID[];
+  subject: string;
+  /** Plain text or light Markdown. */
+  body: string;
+  inReplyTo: ID | null;
+  createdAt: number;
+  /** Your copy: you sent it, or it was sent to you. */
+  sent: boolean;
+  received: boolean;
+  read: boolean;
+  archived: boolean;
+}
+
+/** A conversation in a folder listing: its latest message, without bodies. */
+export interface PlayerMailThread {
+  threadId: ID;
+  /** The subject of its first message you can see. */
+  subject: string;
+  /** Latest message you can see in it; `body` is empty (see `snippet`). */
+  latest: PlayerMail;
+  snippet: string;
+  /** Everyone who wrote or received a message in it (that you can see). */
+  participantIds: ID[];
+  count: number;
+  unread: number;
+}
+
+export interface PlayerMailSnapshot {
+  /** Only the count: folders and conversations are fetched on demand (list_player_mail, get_player_thread). */
+  playerMail: { unread: number };
+}
+
+export type PlayerMailEvent =
+  /** A message you sent or received. Only its participants get it. */
+  | { type: 'player_mail'; mail: PlayerMail; unread: number }
+  /** Your copies changed (read, archived or deleted), maybe from another tab. */
+  | { type: 'player_mail_changed'; unread: number };
+
+export interface PlayerMailCommands {
+  /** Conversations in one of your folders, newest first. Page with `before` = the last thread's `latest.createdAt`. */
+  list_player_mail: {
+    args: { folder: PlayerMailFolder; query?: string; before?: number | null; limit?: number };
+    result: { threads: PlayerMailThread[]; more: boolean };
+  };
+  /** Every message of a conversation you can see, oldest first. */
+  get_player_thread: { args: { threadId: ID }; result: PlayerMail[] };
+  /** To players of this office. A reply (`inReplyTo`) joins that conversation. */
+  send_player_mail: { args: { to: ID[]; subject: string; body: string; inReplyTo?: ID | null }; result: PlayerMail };
+  /** Marks a conversation read or unread, archives or unarchives it (your copy only). */
+  update_player_mail: { args: { threadId: ID; read?: boolean; archived?: boolean }; result: null };
+  /** Deletes one message (`id`) or the whole conversation from your mailbox; the others keep theirs. */
+  delete_player_mail: { args: { threadId: ID; id?: ID | null }; result: null };
+}
+
+export type PlayerMailCommandName = keyof PlayerMailCommands;
+
+// ================================================================ media: voice chat & meeting-room screen sharing
+// Audio and video flow peer to peer between players' browsers (WebRTC, a full
+// mesh); the host only relays signaling, addressed to one tab, and keeps the
+// runtime state: who is in voice, in which mode, and who is sharing a screen in
+// which floor's meeting room. Agents never take part. Hooked in through
+// `Snapshot extends MediaSnapshot`, `ServerEvent | MediaEvent`,
+// `Commands extends MediaCommands` and `Settings.voice`.
+
+/** proximity: you hear players near your avatar on your floor. global: the company-wide channel. */
+export type VoiceMode = 'proximity' | 'global';
+
+export interface VoiceState {
+  userId: ID;
+  /** Random id of the player's browser tab; WebRTC signals are addressed to it. */
+  peerId: string;
+  mode: VoiceMode;
+  /** The player's mic is live (transmitting) right now. */
+  mic: boolean;
+  /** Floor whose meeting the player joined from outside the room ("Join meeting"); null otherwise. */
+  meeting: ID | null;
+}
+
+/** One active screen share per floor's meeting room. */
+export interface ScreenShare {
+  floorId: ID;
+  userId: ID;
+  peerId: string;
+  startedAt: number;
+}
+
+export interface VoiceSettings {
+  /** STUN servers (a public one by default). */
+  stunUrls: string[];
+  /** Optional TURN relay, needed by players behind strict NATs, e.g. "turn:turn.example.com:3478". */
+  turnUrl: string | null;
+  turnUsername: string | null;
+  /** A TURN credential is stored on the host. It is never broadcast: players fetch it with get_ice_servers. */
+  turnCredentialSet: boolean;
+  /** Proximity chat: beyond this distance (meters) you can't hear someone. */
+  proximityRadius: number;
+}
+
+export interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+export interface IceCandidate {
+  candidate: string;
+  sdpMid: string | null;
+  sdpMLineIndex: number | null;
+  usernameFragment?: string | null;
+}
+
+export type RtcSignal =
+  | { kind: 'offer'; sdp: string }
+  | { kind: 'answer'; sdp: string }
+  | { kind: 'ice'; candidate: IceCandidate };
+
+export interface MediaSnapshot {
+  voice: VoiceState[];
+  screenShares: ScreenShare[];
+}
+
+export type MediaEvent =
+  | { type: 'voice_state'; voice: VoiceState }
+  | { type: 'voice_left'; userId: ID }
+  | { type: 'screen_share'; share: ScreenShare }
+  | { type: 'screen_share_ended'; floorId: ID; userId: ID }
+  /** Sent only to the addressed player; their tab with `toPeerId` handles it. */
+  | { type: 'rtc_signal'; fromUserId: ID; fromPeerId: string; toPeerId: string; signal: RtcSignal };
+
+export interface MediaCommands {
+  /** Joins voice or updates your state. The mic is only live when the player turned it on. */
+  voice_state: { args: { peerId: string; mode: VoiceMode; mic: boolean; meeting: ID | null }; result: VoiceState };
+  /** Leaves voice (ignored if another tab of yours took over meanwhile) and stops your screen shares. */
+  voice_leave: { args: { peerId: string }; result: null };
+  /** Relays an offer, answer or ICE candidate to one tab of another player in voice. */
+  rtc_signal: { args: { toUserId: ID; toPeerId: string; fromPeerId: string; signal: RtcSignal }; result: null };
+  /** Claims the floor's meeting-room screen (one sharer at a time). */
+  screen_share_start: { args: { floorId: ID; peerId: string }; result: ScreenShare };
+  /** The sharer stops sharing; the boss may also stop anyone's share. */
+  screen_share_stop: { args: { floorId: ID }; result: null };
+  /** STUN/TURN servers for RTCPeerConnection, including the TURN credential (players only). */
+  get_ice_servers: { args: Record<string, never>; result: { iceServers: IceServer[] } };
+  /** Owner only. `turnCredential`: undefined keeps the stored one, null or '' clears it. */
+  set_voice_settings: {
+    args: { stunUrls?: string[]; turnUrl?: string | null; turnUsername?: string | null; turnCredential?: string | null; proximityRadius?: number };
+    result: VoiceSettings;
+  };
+}
+
+// ================================================================ office customization (decorate mode)
+// Decorations placed per floor and desk setups per agent, persisted on the
+// host in the office database. The catalog of items, desk options and room
+// styles is data in ./catalog.ts. Hooked into the types above through
+// `Snapshot extends DecorSnapshot`, `ServerEvent | DecorEvent`,
+// `Commands extends DecorCommands` and the new FloorTheme / Building fields.
+
+export type WallFinish = 'paint' | 'brick' | 'wood' | 'concrete' | 'glass';
+export type LightingPreset = 'daylight' | 'warm' | 'cool' | 'evening' | 'night';
+export type WindowView = 'city' | 'park' | 'sea';
+export type FacadeMaterial = 'paint' | 'glass' | 'brick' | 'concrete' | 'wood';
+
+/** A catalog item placed on a floor. */
+export interface DecorItem {
+  id: ID;
+  floorId: ID;
+  /** Catalog id (catalog.ts). */
+  itemId: string;
+  /** Center of its footprint on the floor plan (wall items: on the wall's surface). */
+  x: number;
+  z: number;
+  /** Quarter turns around Y (0–3). Wall items always face into the room. */
+  rotation: number;
+  /** For tintable items; null = the catalog default. */
+  color: string | null;
+  /** What it cost (0 in sandbox), refunded when it is sold. */
+  paid: number;
+  createdAt: number;
+}
+
+export type DeskModel = 'classic' | 'walnut' | 'white' | 'black';
+export type ChairModel = 'office' | 'gaming' | 'executive';
+export type DeskItem = 'mug' | 'stationery' | 'plant' | 'lamp' | 'figure' | 'photo' | 'books';
+
+export interface DeskStyle {
+  desk: DeskModel;
+  chair: ChairModel;
+  monitors: 1 | 2 | 3;
+  items: DeskItem[];
+}
+
+/** An upgraded desk; it belongs to the agent sitting at it. Other desks are BASIC_DESK. */
+export interface DeskSetup {
+  agentId: ID;
+  style: DeskStyle;
+  /** What the upgrades cost (0 in sandbox), refunded when downgraded or the agent leaves. */
+  paid: number;
+}
+
+export interface DecorSnapshot {
+  decor: DecorItem[];
+  desks: DeskSetup[];
+}
+
+export type DecorEvent =
+  | { type: 'decor'; item: DecorItem }
+  | { type: 'decor_removed'; id: ID }
+  | { type: 'desk_setup'; setup: DeskSetup }
+  | { type: 'desk_setup_removed'; agentId: ID };
+
+export interface DecorCommands {
+  /**
+   * Owner only. Buys (career: the catalog price, through the ledger) and
+   * places an item. The client picks the id, so undo/redo can restore it.
+   */
+  place_decor: { args: { id: ID; floorId: ID; itemId: string; x: number; z: number; rotation: number; color?: string | null }; result: DecorItem };
+  /** Owner only. Moves, turns or recolors an item (free). */
+  update_decor: { args: { id: ID; patch: Partial<Pick<DecorItem, 'x' | 'z' | 'rotation' | 'color'>> }; result: DecorItem };
+  /** Owner only. Sells an item back (refunds what it cost) and removes it. */
+  remove_decor: { args: { id: ID }; result: null };
+  /**
+   * The boss or the agent's owner. Career: pays the difference in upgrade
+   * value (or gets it back). null resets to the basic desk.
+   */
+  set_desk_style: { args: { agentId: ID; style: DeskStyle | null }; result: DeskSetup | null };
+}
+
+export type DecorCommandName = keyof DecorCommands;

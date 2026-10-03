@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { Agent, Appearance, Building, BuildingKind, Commands, Floor, FloorMaterial, ID, PermissionMode, Snapshot } from '@agent-hq/protocol';
+import type { Agent, Appearance, Building, BuildingKind, Commands, FacadeMaterial, Floor, ID, PermissionMode, Snapshot } from '@agent-hq/protocol';
+import { FACADES, HAIR_COLORS, HAIR_STYLES, PALETTE, SKIN_TONES } from '@agent-hq/protocol/catalog';
 import { COORDINATOR, MODELS } from '../agentUtil.ts';
-import { client } from '../api.ts';
+import { client, pickFolder } from '../api.ts';
 import { randomAgentName } from '../names.ts';
 import { assignBlocked } from './Accounts.tsx';
 import { HiringFeeNote } from './Finance.tsx';
@@ -18,10 +19,7 @@ export const PERMISSION_MODES: Array<{ value: PermissionMode; label: string }> =
 ];
 
 export const ROLE_PRESETS = ['Full-stack developer', 'Frontend developer', 'Backend developer', 'QA engineer', 'Tech lead', 'DevOps engineer', 'Game developer', '3D artist', 'UI designer'];
-export const COLORS = ['#3d63dd', '#e5484d', '#30a46c', '#f76b15', '#8e4ec6', '#12a594', '#d6409f', '#ffb224', '#5b6170'];
-const SKINS = ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#a0662f', '#8d5524'];
-const HAIRS = ['#1c1c1c', '#2c1b10', '#6a4e2e', '#b8860b', '#a33b20', '#d8d8d8', '#6b4bd6'];
-const HAIR_STYLES: Appearance['hairStyle'][] = ['short', 'long', 'bun', 'bald'];
+export const COLORS = [...PALETTE, '#5b6170'];
 
 function Swatches(props: { colors: string[]; value: string; onChange: (c: string) => void }) {
   return (
@@ -37,8 +35,8 @@ function Swatches(props: { colors: string[]; value: string; onChange: (c: string
 export function LookPicker({ look, onChange }: { look: Appearance; onChange: (look: Appearance) => void }) {
   return (
     <div className="look">
-      <span>Skin</span><Swatches colors={SKINS} value={look.skin} onChange={(skin) => onChange({ ...look, skin })} />
-      <span>Hair</span><Swatches colors={HAIRS} value={look.hair} onChange={(hair) => onChange({ ...look, hair })} />
+      <span>Skin</span><Swatches colors={SKIN_TONES} value={look.skin} onChange={(skin) => onChange({ ...look, skin })} />
+      <span>Hair</span><Swatches colors={HAIR_COLORS} value={look.hair} onChange={(hair) => onChange({ ...look, hair })} />
       <span>Shirt</span><Swatches colors={COLORS} value={look.shirt} onChange={(shirt) => onChange({ ...look, shirt })} />
       <span>Style</span>
       <div className="row">
@@ -53,7 +51,7 @@ export function LookPicker({ look, onChange }: { look: Appearance; onChange: (lo
 
 function randomAppearance(): Appearance {
   const pick = <T,>(l: T[]) => l[Math.floor(Math.random() * l.length)];
-  return { skin: pick(SKINS), hair: pick(HAIRS), shirt: pick(COLORS), hairStyle: pick(HAIR_STYLES) };
+  return { skin: pick(SKIN_TONES), hair: pick(HAIR_COLORS), shirt: pick(COLORS), hairStyle: pick(HAIR_STYLES) };
 }
 
 /** Hire a new agent, or edit an existing one when `agent` is given. */
@@ -182,12 +180,56 @@ function GithubAccount() {
   );
 }
 
+/**
+ * A folder on the machine that runs your agents: typed, or chosen with the
+ * system's folder dialog (the desktop app's own, or one the host opens).
+ */
+function FolderField(props: { label: string; value: string; onChange: (path: string) => void; placeholder: string }) {
+  const [picking, setPicking] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const browse = async () => {
+    setPicking(true);
+    setProblem(null);
+    try {
+      const chosen = await pickFolder(props.value.trim() || undefined);
+      if (chosen) props.onChange(chosen);
+    } catch (err) {
+      setProblem((err as Error).message);
+    } finally {
+      setPicking(false);
+    }
+  };
+  return (
+    <label>{props.label}
+      <span className="input-with-btn">
+        <input required value={props.value} onChange={(e) => props.onChange(e.target.value)} placeholder={props.placeholder} spellCheck={false} autoComplete="off" />
+        <button type="button" className="ghost browse" onClick={browse} disabled={picking}>{picking ? 'Choosing…' : 'Browse…'}</button>
+      </span>
+      {picking && !window.agentHQ && <span className="hint folder-note">Choose a folder in the dialog that just opened (it may be behind this window).</span>}
+      {problem && <span className="hint folder-note">{problem}</span>}
+    </label>
+  );
+}
+
+/** `folder` inside `parent`, with the parent's own separator; `parent` itself when it already is that folder. */
+function joinFolder(parent: string, folder: string): string {
+  const sep = parent.includes('\\') && !parent.includes('/') ? '\\' : '/';
+  const base = parent.replace(/[\\/]+$/, '');
+  if (!folder || base.split(/[\\/]/).pop() === folder) return parent;
+  return `${base}${sep}${folder}`;
+}
+
 /** Every project is a GitHub repository: an existing clone, or a new repository created from here. */
 export function NewProjectModal(props: { floorId: ID; note?: string; onClose: () => void }) {
   const [mode, setMode] = useState<'link' | 'create'>('link');
   const [name, setName] = useState('');
   const [repoName, setRepoName] = useState<string | null>(null);
+  const [clone, setClone] = useState('');
+  const [parent, setParent] = useState('');
   const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  const repo = repoName ?? slug(name);
+  // A new repository gets its own folder, named after it, inside the chosen one.
+  const target = parent.trim() ? joinFolder(parent.trim(), repo.split('/').pop() ?? '') : '';
   return (
     <FormModal
       title="New project"
@@ -196,33 +238,34 @@ export function NewProjectModal(props: { floorId: ID; note?: string; onClose: ()
       onClose={props.onClose}
       onSubmit={(d) => client.request('create_project', {
         name: str(d, 'name'),
-        repoPath: str(d, 'repoPath'),
+        repoPath: mode === 'create' ? target : clone.trim(),
         floorId: props.floorId,
         createGithubRepo: mode === 'create' ? { name: str(d, 'repoName'), private: d.get('private') === 'on' } : null,
       })}
     >
       {props.note && <p className="callout">{props.note}</p>}
-      <div className="tabs inline">
-        <button type="button" className={mode === 'link' ? 'active' : ''} onClick={() => setMode('link')}>Link a GitHub clone</button>
-        <button type="button" className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>Create a new GitHub repository</button>
+      <div className="tabs inline segmented" role="tablist">
+        <button type="button" role="tab" aria-selected={mode === 'link'} className={mode === 'link' ? 'active' : ''} onClick={() => setMode('link')}>Link a GitHub clone</button>
+        <button type="button" role="tab" aria-selected={mode === 'create'} className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>Create a new GitHub repository</button>
       </div>
       <label>Name<input name="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} /></label>
       {mode === 'link' ? (
         <>
-          <label>Local folder<input name="repoPath" required placeholder="C:\dev\my-app or ~/dev/my-app" /></label>
+          <FolderField label="Local folder" value={clone} onChange={setClone} placeholder="C:\dev\my-app or ~/dev/my-app" />
           <p className="hint">The root of a git repository whose <code>origin</code> is on GitHub, for example a clone of it.</p>
         </>
       ) : (
         <>
-          <label>Local folder<input name="repoPath" required placeholder="~/dev/my-app (created if it doesn't exist)" /></label>
           <div className="grid2">
             <label>Repository name
-              <input name="repoName" required value={repoName ?? slug(name)} onChange={(e) => setRepoName(e.target.value)} placeholder="my-app or my-org/my-app" />
+              <input name="repoName" required value={repo} onChange={(e) => setRepoName(e.target.value)} placeholder="my-app or my-org/my-app" />
             </label>
             <label className="check"><input type="checkbox" name="private" defaultChecked /> Private</label>
           </div>
+          <FolderField label="Create in" value={parent} onChange={setParent} placeholder="C:\dev or ~/dev" />
           <p className="hint">
-            Agent HQ initializes git in the folder if needed, creates the repository with <code>gh repo create</code>, makes it
+            {target ? <>The project goes in <code>{target}</code>, created if it doesn't exist. </> : null}
+            Agent HQ initializes git there if needed, creates the repository with <code>gh repo create</code>, makes it
             the <code>origin</code> and pushes.
           </p>
           <GithubAccount />
@@ -281,6 +324,7 @@ const KINDS: Array<{ value: BuildingKind; label: string }> = [
 export function BuildingModal(props: { building?: Building; onClose: () => void }) {
   const b = props.building;
   const [color, setColor] = useState(b?.color ?? COLORS[0]);
+  const [facade, setFacade] = useState<FacadeMaterial>(b?.facade ?? 'paint');
   return (
     <FormModal
       title={b ? `Edit ${b.name}` : 'New building'}
@@ -288,7 +332,8 @@ export function BuildingModal(props: { building?: Building; onClose: () => void 
       onClose={props.onClose}
       onSubmit={(d) => {
         const fields = { name: str(d, 'name'), kind: str(d, 'kind') as BuildingKind, color };
-        return b ? client.request('update_building', { id: b.id, patch: fields }) : client.request('create_building', fields);
+        if (!b) return client.request('create_building', fields).then((created) => client.request('update_building', { id: created.id, patch: { facade, sign: str(d, 'sign') || null } }));
+        return client.request('update_building', { id: b.id, patch: { ...fields, facade, sign: str(d, 'sign') || null } });
       }}
     >
       <label>Name<input name="name" required autoFocus defaultValue={b?.name} placeholder="Game Studio" /></label>
@@ -298,6 +343,16 @@ export function BuildingModal(props: { building?: Building; onClose: () => void 
         </select>
       </label>
       <label>Facade color<Swatches colors={COLORS} value={color} onChange={setColor} /></label>
+      <label>Exterior
+        <div className="row">
+          {FACADES.map((f) => (
+            <button type="button" key={f.id} className={`small ${facade === f.id ? '' : 'ghost'}`} onClick={() => setFacade(f.id)}>{f.name}</button>
+          ))}
+        </div>
+      </label>
+      <label>Rooftop sign
+        <input name="sign" maxLength={40} defaultValue={b?.sign ?? ''} placeholder="Your company's name (the office name if empty)" />
+      </label>
       {b && (
         <button type="button" className="ghost danger" onClick={() => client.request('remove_building', { id: b.id }).then(props.onClose, (e) => window.dispatchEvent(new CustomEvent('hq-error', { detail: e.message })))}>
           Demolish building
@@ -320,42 +375,23 @@ export function NewFloorModal(props: { buildingId: ID; onClose: () => void }) {
   );
 }
 
-const MATERIALS: Array<{ value: FloorMaterial; label: string }> = [
-  { value: 'wood', label: 'Wood' },
-  { value: 'carpet', label: 'Carpet' },
-  { value: 'tiles', label: 'Tiles' },
-  { value: 'concrete', label: 'Concrete' },
-];
-const WALLS = ['#e9e4da', '#f4f4f2', '#dfe7ef', '#e8dcd0', '#d5e3d5', '#3a3f4b', '#f2d7d9'];
-
 export function FloorModal(props: { floor: Floor; world: Snapshot; onClose: () => void }) {
   const f = props.floor;
-  const [theme, setTheme] = useState(f.theme);
   const [desks, setDesks] = useState(f.desks);
   const seated = props.world.agents.filter((a) => a.floorId === f.id && a.kind !== 'repo').length;
   return (
     <FormModal
-      title={`Customize ${f.name}`}
+      title={`${f.name} settings`}
       submitLabel="Save"
       onClose={props.onClose}
-      onSubmit={(d) => client.request('update_floor', { id: f.id, patch: { name: str(d, 'name'), desks, theme } })}
+      onSubmit={(d) => client.request('update_floor', { id: f.id, patch: { name: str(d, 'name'), desks } })}
     >
       <label>Name<input name="name" required defaultValue={f.name} /></label>
       <label>Workstations: {desks}
         <input type="range" min={Math.max(1, seated)} max={24} value={desks} onChange={(e) => setDesks(Number(e.target.value))} />
         <span className="hint">Expand the office to fit more agents on this floor.</span>
       </label>
-      <label>Floor
-        <div className="row">
-          {MATERIALS.map((m) => (
-            <button type="button" key={m.value} className={`small ${theme.floor === m.value ? '' : 'ghost'}`} onClick={() => setTheme({ ...theme, floor: m.value })}>{m.label}</button>
-          ))}
-        </div>
-      </label>
-      <label>Walls<Swatches colors={WALLS} value={theme.wallColor} onChange={(wallColor) => setTheme({ ...theme, wallColor })} /></label>
-      <label>Accent<Swatches colors={COLORS} value={theme.accentColor} onChange={(accentColor) => setTheme({ ...theme, accentColor })} /></label>
-      <label className="check"><input type="checkbox" checked={theme.plants} onChange={(e) => setTheme({ ...theme, plants: e.target.checked })} /> Plants</label>
-      <label className="check"><input type="checkbox" checked={theme.lounge} onChange={(e) => setTheme({ ...theme, lounge: e.target.checked })} /> Lounge with coffee machine</label>
+      <p className="hint">Furniture, floor and wall finishes, lighting and desk upgrades are in <strong>Menu → Decorate</strong>.</p>
       <button type="button" className="ghost danger" onClick={() => client.request('remove_floor', { id: f.id }).then(props.onClose, (e) => window.dispatchEvent(new CustomEvent('hq-error', { detail: e.message })))}>
         Remove floor
       </button>
