@@ -247,7 +247,7 @@ export class Orchestrator {
     if (!handler) throw new Error(`Unknown command: ${command}`);
     let user: User;
     if (actor.kind === 'agent') {
-      if (!MANAGER_COMMANDS.has(command) || !actor.manager) throw new Error('Only manager agents can change the board');
+      if (!MANAGER_COMMANDS.has(command) || !actor.manager) throw new Error('Only coordinator agents can change the board');
       user = this.owner();
     } else {
       user = actor.user;
@@ -606,7 +606,7 @@ export class Orchestrator {
     for (const agent of this.store.all('agent')) {
       let next = this.isAvailable(agent, true) ? todo.find((t) => t.assigneeId === agent.id) : undefined;
       if (!next && this.store.settings.dispatchMode === 'auto' && this.isAvailable(agent)) {
-        // Managers plan and delegate; they don't grab open tasks themselves.
+        // Coordinators plan and delegate; they don't grab open tasks themselves.
         next = agent.isManager ? undefined : todo.find((t) => !t.assigneeId && this.store.get('project', t.projectId)?.floorId === agent.floorId);
       }
       if (!next) continue;

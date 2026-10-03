@@ -49,7 +49,7 @@ into their monitor so you can type straight into their terminal.
   auto-dispatch so idle agents on a floor pick them up.
 - **Isolated work**: each task runs in its own git worktree on an `hq/<agent>-<task>` branch. Marking a task done
   cleans up the worktree and keeps the branch for you to merge.
-- **Managers**: hire an agent as a manager and it plans work and delegates tasks to teammates through the built-in
+- **Coordinators**: hire an agent as a coordinator and it plans work and delegates tasks to teammates through the built-in
   `agent-hq` MCP tools.
 - **Persistent memory**: each agent keeps notes per project that survive tasks and restarts.
 - **Approvals or auto mode**: per agent, from "ask me before sensitive actions" to Claude Code's auto mode.
@@ -70,7 +70,7 @@ into their monitor so you can type straight into their terminal.
 |---|---|
 | ![Campus](docs/screenshots/campus.png) **Campus**: one tower per studio; lit windows show who's working. | ![First person](docs/screenshots/first-person.png) **Walk mode**: first person, with collisions and a crosshair. |
 | ![Agent terminal](docs/screenshots/agent-terminal.png) **An agent's monitor**: the real Claude Code session, here asking to create a file. | ![Task board](docs/screenshots/task-board.png) **Task board**: worktree branches, assignees and review. |
-| ![Recruit](docs/screenshots/recruit-agent.png) **Recruiting**: role, model, permissions, look, manager and integrations. | ![Usage](docs/screenshots/usage-report.png) **Usage report**: per agent, project and day. |
+| ![Recruit](docs/screenshots/recruit-agent.png) **Recruiting**: role, model, permissions, look, coordinator and integrations. | ![Usage](docs/screenshots/usage-report.png) **Usage report**: per agent, project and day. |
 | ![Team](docs/screenshots/team-invites.png) **Team**: players and invite links. | |
 
 ## Requirements
@@ -111,7 +111,7 @@ The `?token=…` in the link makes you the office owner. Keep it private.
 
 1. **Pick a floor.** From the campus, click a building's storey, or use the elevator and the directory in the office.
 2. **Add a project.** A project is a git repository on your machine (`+ Project`). Tasks always belong to a project.
-3. **Recruit.** Click an empty desk. Choose a name, role, model, permission mode and look; tick *Manager* if this agent
+3. **Recruit.** Click an empty desk. Choose a name, role, model, permission mode and look; tick *Coordinator* if this agent
    should plan and delegate; pick optional integrations.
 4. **Give work.** Open the board (the whiteboard, or the HUD button) and add tasks, or click an agent's computer and use
    **＋ Task**. With auto-dispatch on, idle agents pick up unassigned tasks from their floor's projects.
